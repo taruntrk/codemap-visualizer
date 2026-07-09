@@ -1,7 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { Parser } from 'web-tree-sitter';
-
+const { Parser, Language }: any = require('web-tree-sitter');
 let pythonLanguage: any = null;
 let parserInitialized = false;
 
@@ -9,15 +8,12 @@ async function initializeParser(extensionPath: string): Promise<void> {
     if (parserInitialized) {
         return;
     }
-
     await Parser.init({
         locateFile: () => path.join(extensionPath, 'grammars', 'web-tree-sitter.wasm')
     });
-
-    pythonLanguage = await Parser.Language.load(
+    pythonLanguage = await Language.load(
         path.join(extensionPath, 'grammars', 'tree-sitter-python.wasm')
     );
-
     parserInitialized = true;
 }
 
@@ -118,12 +114,16 @@ export async function parsePythonFile(filePath: string, rootPath: string, extens
                 functions.push({ name: funcName, params, calls });
             }
 
-            for (const child of node.children) {
+            for (const child of node.children || []) {
                 walk(child);
             }
         }
 
-        walk(tree.rootNode);
+        // start walking the tree
+        walk((tree as any).rootNode);
+
+        const exportsArr: string[] = [];
+        const loc = sourceCode.split(/\r\n|\r|\n/).length;
 
         return {
             id: relativePath,
@@ -131,12 +131,11 @@ export async function parsePythonFile(filePath: string, rootPath: string, extens
             language: 'python',
             imports,
             functions,
-            exports: functions.map(f => f.name),
-            loc: sourceCode.split('\n').length,
-            parseError: null
+            exports: exportsArr,
+            loc,
+            parseError: null,
         };
-
-    } catch (error: any) {
+    } catch (e: any) {
         return {
             id: relativePath,
             fileName,
@@ -145,7 +144,7 @@ export async function parsePythonFile(filePath: string, rootPath: string, extens
             functions: [],
             exports: [],
             loc: 0,
-            parseError: error.message
+            parseError: e && e.message ? String(e.message) : String(e),
         };
     }
 }

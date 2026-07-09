@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 import { walkFolder, filterCodeFiles } from './scanner/scanner';
+import { parsePythonFile } from './parsers/pythonParser';
+import { buildGraph } from './scanner/graphBuilder';
 
 export function activate(context: vscode.ExtensionContext) {
 
@@ -9,7 +11,7 @@ export function activate(context: vscode.ExtensionContext) {
 		vscode.window.showInformationMessage('Hello World from codemap-visualizer!');
 	});
 
-	const generateMapCommand = vscode.commands.registerCommand('codemap-visualizer.generate', () => {
+	const generateMapCommand = vscode.commands.registerCommand('codemap-visualizer.generate', async () => {
 		const workspaceFolders = vscode.workspace.workspaceFolders;
 
 		if (!workspaceFolders) {
@@ -18,13 +20,31 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 
 		const rootPath = workspaceFolders[0].uri.fsPath;
+		const extensionPath = context.extensionPath;
+
 		const files = walkFolder(rootPath);
 		const codeFiles = filterCodeFiles(files);
+		const pythonFiles = codeFiles.filter(f => f.endsWith('.py'));
 
-		console.log(`Found ${files.length} total files, ${codeFiles.length} code files:`);
-		console.log(codeFiles);
+		vscode.window.showInformationMessage(`Parsing ${pythonFiles.length} Python files...`);
 
-		vscode.window.showInformationMessage(`Scan complete! Found ${codeFiles.length} code files (out of ${files.length} total).`);
+		const results = [];
+		for (const filePath of pythonFiles) {
+			const parsed = await parsePythonFile(filePath, rootPath, extensionPath);
+			results.push(parsed);
+		}
+
+		console.log('Parsed results:', JSON.stringify(results, null, 2));
+
+		const graph = buildGraph(workspaceFolders[0].name, results);
+		console.log('Final Graph:', JSON.stringify(graph, null, 2));
+
+		const totalFunctions = results.reduce((sum, r) => sum + r.functions.length, 0);
+		const totalImports = results.reduce((sum, r) => sum + r.imports.length, 0);
+
+		vscode.window.showInformationMessage(
+			`Done! Parsed ${pythonFiles.length} Python files. Found ${totalFunctions} functions, ${totalImports} imports, ${graph.edges.length} resolved edges.`
+		);
 	});
 
 	context.subscriptions.push(disposable);
