@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { walkFolder, filterCodeFiles } from './scanner/scanner';
 import { parsePythonFile } from './parsers/pythonParser';
 import { buildGraph } from './scanner/graphBuilder';
+import { CodeMapPanel } from './webview/panel';
 
 export function activate(context: vscode.ExtensionContext) {
 
@@ -41,10 +42,14 @@ export function activate(context: vscode.ExtensionContext) {
 
 		const totalFunctions = results.reduce((sum, r) => sum + r.functions.length, 0);
 		const totalImports = results.reduce((sum, r) => sum + r.imports.length, 0);
+		const importEdges = graph.edges.filter(e => e.type === 'import').length;
+		const callEdges = graph.edges.filter(e => e.type === 'call').length;
 
 		vscode.window.showInformationMessage(
-			`Done! Parsed ${pythonFiles.length} Python files. Found ${totalFunctions} functions, ${totalImports} imports, ${graph.edges.length} resolved edges.`
+			`Done! Parsed ${pythonFiles.length} Python files. Found ${totalFunctions} functions, ${totalImports} imports, ${importEdges} import-edges, ${callEdges} call-edges.`
 		);
+
+		CodeMapPanel.createOrShow(graph);
 	});
 
 	context.subscriptions.push(disposable);

@@ -18,8 +18,10 @@ export interface GraphNode {
 export interface GraphEdge {
     source: string;
     target: string;
-    type: 'import';
-    importedSymbols: string[];
+    type: 'import' | 'call';
+    importedSymbols?: string[];
+    sourceFunction?: string;
+    targetFunction?: string;
 }
 
 export interface CodeGraph {
@@ -56,6 +58,76 @@ function resolvePythonModule(moduleName: string, allNodeIds: Set<string>): strin
     return null;
 }
 
+/**
+ * Builds file-level "import" edges: source file -> target file it imports from.
+ */
+function buildImportEdges(parsedFiles: FileParseResult[], allNodeIds: Set<string>): GraphEdge[] {
+    const edges: GraphEdge[] = [];
+
+    for (const file of parsedFiles) {
+        for (const imp of file.imports) {
+            const targetId = resolvePythonModule(imp.from, allNodeIds);
+
+            if (targetId && targetId !== file.id) {
+                edges.push({
+                    source: file.id,
+                    target: targetId,
+                    type: 'import',
+                    importedSymbols: imp.names,
+                });
+            }
+            // if targetId is null, it's treated as external and skipped for edges
+        }
+    }
+
+    return edges;
+}
+
+/**
+ * Builds cross-file "call" edges: for each function, checks if the names it calls
+ * match a symbol imported from another (internal) file. If so, draws a function-level
+ * call edge from the calling file/function to the target file/function.
+ */
+function buildCallEdges(parsedFiles: FileParseResult[], allNodeIds: Set<string>): GraphEdge[] {
+    const edges: GraphEdge[] = [];
+
+    for (const file of parsedFiles) {
+        // Map: imported symbol name -> resolved target file id
+        const symbolToTarget = new Map<string, string>();
+
+        for (const imp of file.imports) {
+            const targetId = resolvePythonModule(imp.from, allNodeIds);
+            if (!targetId) {
+                continue;
+            }
+            for (const name of imp.names) {
+                symbolToTarget.set(name, targetId);
+            }
+        }
+
+        if (symbolToTarget.size === 0) {
+            continue;
+        }
+
+        for (const fn of file.functions) {
+            for (const callName of fn.calls) {
+                const targetId = symbolToTarget.get(callName);
+                if (targetId && targetId !== file.id) {
+                    edges.push({
+                        source: file.id,
+                        target: targetId,
+                        type: 'call',
+                        sourceFunction: fn.name,
+                        targetFunction: callName,
+                    });
+                }
+            }
+        }
+    }
+
+    return edges;
+}
+
 export function buildGraph(projectName: string, parsedFiles: FileParseResult[]): CodeGraph {
     const nodes: GraphNode[] = parsedFiles.map(file => ({
         id: file.id,
@@ -72,28 +144,14 @@ export function buildGraph(projectName: string, parsedFiles: FileParseResult[]):
     }));
 
     const allNodeIds = new Set(nodes.map(n => n.id));
-    const edges: GraphEdge[] = [];
 
-    for (const file of parsedFiles) {
-        for (const imp of file.imports) {
-            const targetId = resolvePythonModule(imp.from, allNodeIds);
-
-            if (targetId && targetId !== file.id) {
-                edges.push({
-                    source: file.id,
-                    target: targetId,
-                    type: 'import',
-                    importedSymbols: imp.names,
-                });
-            }
-            // if targetId is null, it's treated as external (isExternal) and skipped for edges
-        }
-    }
+    const importEdges = buildImportEdges(parsedFiles, allNodeIds);
+    const callEdges = buildCallEdges(parsedFiles, allNodeIds);
 
     return {
         projectName,
         generatedAt: new Date().toISOString(),
         nodes,
-        edges,
+        edges: [...importEdges, ...callEdges],
     };
 }
