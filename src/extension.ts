@@ -49,7 +49,7 @@ export function activate(context: vscode.ExtensionContext) {
 			`Done! Parsed ${pythonFiles.length} Python files. Found ${totalFunctions} functions, ${totalImports} imports, ${importEdges} import-edges, ${callEdges} call-edges.`
 		);
 
-		CodeMapPanel.createOrShow(graph);
+		CodeMapPanel.createOrShow(graph, rootPath);
 	});
 
 	context.subscriptions.push(disposable);

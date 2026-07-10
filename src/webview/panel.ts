@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { CodeGraph } from '../scanner/graphBuilder';
 
 export class CodeMapPanel {
@@ -6,7 +7,7 @@ export class CodeMapPanel {
     private readonly panel: vscode.WebviewPanel;
     private disposables: vscode.Disposable[] = [];
 
-    public static createOrShow(graph: CodeGraph) {
+    public static createOrShow(graph: CodeGraph, rootPath: string) {
         const column = vscode.window.activeTextEditor
             ? vscode.window.activeTextEditor.viewColumn
             : undefined;
@@ -27,13 +28,31 @@ export class CodeMapPanel {
             }
         );
 
-        CodeMapPanel.currentPanel = new CodeMapPanel(panel, graph);
+        CodeMapPanel.currentPanel = new CodeMapPanel(panel, graph, rootPath);
     }
 
-    private constructor(panel: vscode.WebviewPanel, graph: CodeGraph) {
+    private constructor(panel: vscode.WebviewPanel, graph: CodeGraph, private readonly rootPath: string) {
         this.panel = panel;
         this.update(graph);
         this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
+
+        // Message handler — double click se file open karne ke liye
+        this.panel.webview.onDidReceiveMessage(
+            async (message) => {
+                if (message.command === 'openFile') {
+                    try {
+                        const fullPath = path.join(this.rootPath, message.fileId);
+                        const uri = vscode.Uri.file(fullPath);
+                        const doc = await vscode.workspace.openTextDocument(uri);
+                        await vscode.window.showTextDocument(doc, vscode.ViewColumn.Beside);
+                    } catch (err) {
+                        vscode.window.showErrorMessage(`Could not open file: ${message.fileId}`);
+                    }
+                }
+            },
+            null,
+            this.disposables
+        );
     }
 
     private update(graph: CodeGraph) {
@@ -68,7 +87,7 @@ export class CodeMapPanel {
   #toolbar {
     position:fixed; top:8px; left:8px; z-index:10; background:rgba(37,37,38,0.9);
     backdrop-filter: blur(6px); padding:8px 12px; border-radius:8px; font-size:12px;
-    border:1px solid #3c3c3c;
+    border:1px solid #3c3c3c; max-width:440px;
   }
   #toolbar div { margin-bottom:4px; }
   .legend-line { display:inline-block; width:16px; height:0; border-top:2px solid; margin-right:6px; vertical-align:middle; }
@@ -79,18 +98,25 @@ export class CodeMapPanel {
   #resetBtn:hover { background:#1177bb; }
   svg { width:100vw; height:100vh; display:block; cursor:grab; }
   #viewport.animate { transition: transform 0.6s cubic-bezier(0.22, 1, 0.36, 1); }
+
+  .layer-label { fill:#888; font-size:12px; font-weight:600; pointer-events:none; opacity:0.55; text-anchor:middle; }
+  .layer-divider { stroke:#3c3c3c; stroke-width:1; opacity:0.4; }
+
   .node .core { stroke:#fff; stroke-width:1px; cursor:pointer; transition: filter 0.2s ease, stroke-width 0.2s ease; }
   .node .glow { filter: blur(6px); transition: opacity 0.25s ease; pointer-events:none; }
   .node:hover .core { filter: drop-shadow(0 0 8px currentColor); }
   .node.active .core { stroke-width:2.5px; filter: drop-shadow(0 0 16px #fff); }
   .node.active .glow { opacity:0.6; }
-  .node.dim { opacity:0.07; }
+  .node.dim { opacity:0.06; }
   .node text { fill:#eee; font-size:10px; pointer-events:none; }
-  .edge-import { stroke:#569cd6; stroke-width:1.4px; opacity:0.55; fill:none; transition: opacity 0.3s ease, stroke-width 0.3s ease, filter 0.3s ease; }
-  .edge-call { stroke:#ce9178; stroke-width:1px; stroke-dasharray:4,3; opacity:0.5; fill:none; transition: opacity 0.3s ease, stroke-width 0.3s ease, filter 0.3s ease; }
+  .node.entry .core { stroke:#ffd700; stroke-width:2px; }
+
+  .edge-import { stroke:#569cd6; stroke-width:1.3px; opacity:0.5; fill:none; transition: opacity 0.3s ease, stroke-width 0.3s ease, filter 0.3s ease; }
+  .edge-call { stroke:#ce9178; stroke-width:1px; stroke-dasharray:4,3; opacity:0.4; fill:none; transition: opacity 0.3s ease, stroke-width 0.3s ease, filter 0.3s ease; }
   .edge-import.active { stroke-width:2.6px; opacity:0.95; filter: drop-shadow(0 0 5px #569cd6); }
   .edge-call.active { stroke-width:2px; opacity:0.9; filter: drop-shadow(0 0 5px #ce9178); }
-  .edge-import.dim, .edge-call.dim { opacity:0.04; }
+  .edge-import.dim, .edge-call.dim { opacity:0.03; }
+
   #tooltip {
     position:fixed; pointer-events:none; background:rgba(37,37,38,0.95); border:1px solid #454545;
     padding:8px 10px; border-radius:6px; font-size:12px; max-width:340px; display:none; z-index:20;
@@ -99,16 +125,16 @@ export class CodeMapPanel {
   #tooltip b { color:#4fc1ff; }
   #tooltip .func { color:#9cdcfe; }
   #tooltip .muted { opacity:0.65; }
-  #zoomLabel {
-    position:fixed; bottom:8px; left:8px; font-size:11px; opacity:0.5; z-index:10;
-  }
+  #tooltip .dblclick-hint { color:#b5cea8; font-style:italic; margin-top:4px; }
+  #zoomLabel { position:fixed; bottom:8px; left:8px; font-size:11px; opacity:0.5; z-index:10; }
 </style>
 </head>
 <body>
 <div id="toolbar">
-  <div><span class="legend-line" style="border-color:#569cd6"></span>Import connection (arrow points to imported file)</div>
+  <div>&#9679; <b>Gold ring</b> = entry point (not imported by anything)</div>
+  <div><span class="legend-line" style="border-color:#569cd6"></span>Import connection</div>
   <div><span class="legend-line" style="border-color:#ce9178; border-top-style:dashed;"></span>Function call connection</div>
-  <div class="muted" style="opacity:0.6;">Click a node to zoom &amp; isolate &middot; scroll to zoom &middot; drag background to pan &middot; drag a node to move it</div>
+  <div class="muted" style="opacity:0.6;">Click = isolate &amp; zoom &middot; <b>Double-click = open file</b> &middot; drag to move &middot; scroll to zoom</div>
   <button id="resetBtn">Reset View</button>
 </div>
 <div id="tooltip"></div>
@@ -139,6 +165,7 @@ export class CodeMapPanel {
 
 <script>
 const graph = ${graphJson};
+const vscode = acquireVsCodeApi();
 const svg = document.getElementById('graph');
 const viewport = document.getElementById('viewport');
 const tooltip = document.getElementById('tooltip');
@@ -146,57 +173,8 @@ const zoomLabel = document.getElementById('zoomLabel');
 const resetBtn = document.getElementById('resetBtn');
 const W = window.innerWidth;
 const H = window.innerHeight;
-
-const nodes = graph.nodes.map((n) => ({
-  ...n,
-  x: W/2 + (Math.random()-0.5) * 500,
-  y: H/2 + (Math.random()-0.5) * 500,
-  vx: 0, vy: 0,
-}));
-const nodeById = {};
-nodes.forEach(n => nodeById[n.id] = n);
-
-const nodeRadius = {};
-nodes.forEach(n => { nodeRadius[n.id] = 5 + Math.min(10, (n.functions?.length || 0) * 0.6); });
-
-const edges = graph.edges
-  .map(e => ({...e, s: nodeById[e.source], t: nodeById[e.target]}))
-  .filter(e => e.s && e.t);
-
-function simulate(iterations) {
-  const k = 130;
-  for (let iter = 0; iter < iterations; iter++) {
-    for (let i = 0; i < nodes.length; i++) {
-      for (let j = i+1; j < nodes.length; j++) {
-        const a = nodes[i], b = nodes[j];
-        let dx = a.x - b.x, dy = a.y - b.y;
-        let distSq = dx*dx + dy*dy || 0.01;
-        let dist = Math.sqrt(distSq);
-        let force = 2400 / distSq;
-        let fx = (dx/dist) * force, fy = (dy/dist) * force;
-        a.vx += fx; a.vy += fy;
-        b.vx -= fx; b.vy -= fy;
-      }
-    }
-    for (const e of edges) {
-      let dx = e.t.x - e.s.x, dy = e.t.y - e.s.y;
-      let dist = Math.sqrt(dx*dx+dy*dy) || 0.01;
-      let force = (dist - k) * 0.02;
-      let fx = (dx/dist) * force, fy = (dy/dist) * force;
-      e.s.vx += fx; e.s.vy += fy;
-      e.t.vx -= fx; e.t.vy -= fy;
-    }
-    for (const n of nodes) {
-      n.vx += (W/2 - n.x) * 0.001;
-      n.vy += (H/2 - n.y) * 0.001;
-      n.vx *= 0.85; n.vy *= 0.85;
-      n.x += n.vx; n.y += n.vy;
-    }
-  }
-}
-simulate(400);
-
 const svgNS = "http://www.w3.org/2000/svg";
+
 function el(tag, attrs) {
   const e = document.createElementNS(svgNS, tag);
   for (const k in attrs) e.setAttribute(k, attrs[k]);
@@ -210,8 +188,64 @@ function colorForFolder(folder) {
   return palette[hash % palette.length];
 }
 
-// computes the visible start/end points of an edge line, trimmed so the
-// arrowhead lands just outside the target circle (not hidden under it)
+const nodes = graph.nodes.map(n => ({ ...n, x: 0, y: 0 }));
+const nodeById = {};
+nodes.forEach(n => nodeById[n.id] = n);
+const nodeRadius = {};
+nodes.forEach(n => { nodeRadius[n.id] = 5 + Math.min(10, (n.functions?.length || 0) * 0.6); });
+
+const edges = graph.edges.map(e => ({...e, s: nodeById[e.source], t: nodeById[e.target]})).filter(e => e.s && e.t);
+const importEdges = edges.filter(e => e.type === 'import');
+
+// layered layout
+const incomingCount = {};
+nodes.forEach(n => incomingCount[n.id] = 0);
+importEdges.forEach(e => incomingCount[e.target] += 1);
+const entryIds = new Set(nodes.filter(n => incomingCount[n.id] === 0).map(n => n.id));
+if (entryIds.size === 0 && nodes.length > 0) { entryIds.add(nodes[0].id); }
+
+const layer = {};
+nodes.forEach(n => layer[n.id] = 0);
+
+const passes = Math.min(nodes.length, 60);
+for (let p = 0; p < passes; p++) {
+  let changed = false;
+  for (const e of importEdges) {
+    const proposed = layer[e.source] + 1;
+    if (layer[e.target] < proposed) { layer[e.target] = proposed; changed = true; }
+  }
+  if (!changed) { break; }
+}
+
+const layerGroups = {};
+nodes.forEach(n => {
+  const l = layer[n.id];
+  (layerGroups[l] = layerGroups[l] || []).push(n);
+});
+Object.values(layerGroups).forEach(group => {
+  group.sort((a, b) => (a.folderPath + a.fileName).localeCompare(b.folderPath + b.fileName));
+});
+
+const colSpacing = 260;
+const rowSpacing = 64;
+const layerKeys = Object.keys(layerGroups).map(Number).sort((a,b) => a-b);
+layerKeys.forEach(l => {
+  const group = layerGroups[l];
+  const totalHeight = group.length * rowSpacing;
+  group.forEach((n, i) => {
+    n.x = 160 + l * colSpacing;
+    n.y = (H/2 - totalHeight/2) + i * rowSpacing + rowSpacing/2;
+  });
+});
+
+const nodeGroups = [];
+const edgeEls = [];
+
+function markerId(type, state) {
+  const base = type === 'import' ? 'arrow-import' : 'arrow-call';
+  return state ? base + '-' + state : base;
+}
+
 function computeEdgeEndpoints(e) {
   const dx = e.t.x - e.s.x, dy = e.t.y - e.s.y;
   const dist = Math.sqrt(dx*dx + dy*dy) || 0.01;
@@ -219,19 +253,32 @@ function computeEdgeEndpoints(e) {
   const rSource = nodeRadius[e.s.id] + 2;
   const rTarget = nodeRadius[e.t.id] + 6;
   return {
-    x1: e.s.x + ux * rSource,
-    y1: e.s.y + uy * rSource,
-    x2: e.t.x - ux * rTarget,
-    y2: e.t.y - uy * rTarget,
+    x1: e.s.x + ux * rSource, y1: e.s.y + uy * rSource,
+    x2: e.t.x - ux * rTarget, y2: e.t.y - uy * rTarget,
   };
 }
 
-function markerId(type, state) {
-  const base = type === 'import' ? 'arrow-import' : 'arrow-call';
-  return state ? base + '-' + state : base;
+function refreshEdgesFor(nodeId) {
+  edgeEls.forEach(ee => {
+    if (ee.data.source === nodeId || ee.data.target === nodeId) {
+      const pts = computeEdgeEndpoints(ee.data);
+      ee.el.setAttribute('x1', pts.x1); ee.el.setAttribute('y1', pts.y1);
+      ee.el.setAttribute('x2', pts.x2); ee.el.setAttribute('y2', pts.y2);
+    }
+  });
 }
 
-const edgeEls = [];
+// column headers + dividers
+layerKeys.forEach(l => {
+  const x = 160 + l * colSpacing;
+  const label = el('text', { x: x, y: 34, class: 'layer-label' });
+  label.textContent = l === 0 ? 'Entry point' : 'Layer ' + l;
+  viewport.appendChild(label);
+  const divider = el('line', { x1: x, y1: 50, x2: x, y2: H - 20, class: 'layer-divider' });
+  viewport.appendChild(divider);
+});
+
+// draw edges
 for (const e of edges) {
   const pts = computeEdgeEndpoints(e);
   const line = el('line', {
@@ -243,25 +290,18 @@ for (const e of edges) {
   edgeEls.push({ el: line, data: e });
 }
 
-function refreshEdgesFor(nodeId) {
-  edgeEls.forEach(ee => {
-    if (ee.data.source === nodeId || ee.data.target === nodeId) {
-      const pts = computeEdgeEndpoints(ee.data);
-      ee.el.setAttribute('x1', pts.x1);
-      ee.el.setAttribute('y1', pts.y1);
-      ee.el.setAttribute('x2', pts.x2);
-      ee.el.setAttribute('y2', pts.y2);
-    }
-  });
-}
-
-const nodeGroups = [];
+// draw nodes
 for (const n of nodes) {
-  const color = colorForFolder(n.folderPath);
-  const g = el('g', { class:'node', transform: 'translate(' + n.x + ',' + n.y + ')', style: 'color:' + color });
+  const color = colorForFolder(n.folderPath || '(root)');
+  const isEntry = entryIds.has(n.id);
+  const g = el('g', {
+    class: 'node' + (isEntry ? ' entry' : ''),
+    transform: 'translate(' + n.x + ',' + n.y + ')',
+    style: 'color:' + color
+  });
   const radius = nodeRadius[n.id];
-  const glow = el('circle', { r: radius + 5, class:'glow', fill: color, opacity: 0.22 });
-  const circle = el('circle', { r: radius, class:'core', fill: color });
+  const glow = el('circle', { r: radius + 5, class: 'glow', fill: color, opacity: 0.22 });
+  const circle = el('circle', { r: radius, class: 'core', fill: color });
   const label = el('text', { x: radius + 5, y: 3 });
   label.textContent = n.fileName;
   g.appendChild(glow);
@@ -273,17 +313,24 @@ for (const n of nodes) {
   g.addEventListener('mouseenter', (ev) => showTooltip(ev, n));
   g.addEventListener('mousemove', (ev) => positionTooltip(ev));
   g.addEventListener('mouseleave', hideTooltip);
+
+  // single click — isolate + zoom
   g.addEventListener('click', (ev) => { ev.stopPropagation(); selectNode(n.id); });
 
+  // double click — open file in VS Code editor
+  g.addEventListener('dblclick', (ev) => {
+    ev.stopPropagation();
+    vscode.postMessage({ command: 'openFile', fileId: n.id });
+  });
+
+  // drag to reposition node
   let dragging = false;
   g.addEventListener('mousedown', (ev) => { dragging = true; ev.stopPropagation(); });
   window.addEventListener('mousemove', (ev) => {
-    if (!dragging) return;
+    if (!dragging) { return; }
     const rect = svg.getBoundingClientRect();
-    const screenX = ev.clientX - rect.left;
-    const screenY = ev.clientY - rect.top;
-    n.x = (screenX - viewX) / viewScale;
-    n.y = (screenY - viewY) / viewScale;
+    n.x = (ev.clientX - rect.left - viewX) / viewScale;
+    n.y = (ev.clientY - rect.top - viewY) / viewScale;
     g.setAttribute('transform', 'translate(' + n.x + ',' + n.y + ')');
     refreshEdgesFor(n.id);
   });
@@ -293,10 +340,11 @@ for (const n of nodes) {
 function showTooltip(ev, n) {
   const funcs = (n.functions || []).map(f => f.name).slice(0, 12).join(', ');
   tooltip.innerHTML =
-    '<b>' + n.fileName + '</b><br/>' +
-    '<span class="muted">' + (n.folderPath || '(root)') + '</span><br/>' +
+    '<b>' + n.fileName + '</b>' + (entryIds.has(n.id) ? ' &#11088; entry' : '') + '<br/>' +
+    '<span class="muted">' + (n.folderPath || '(root)') + ' &middot; layer ' + layer[n.id] + '</span><br/>' +
     'LOC: ' + n.loc + ' &nbsp; Functions: ' + (n.functions?.length||0) + ' &nbsp; Imports: ' + (n.imports?.length||0) +
-    (funcs ? '<br/><span class="func">' + funcs + '</span>' : '');
+    (funcs ? '<br/><span class="func">' + funcs + '</span>' : '') +
+    '<br/><span class="dblclick-hint">&#128196; Double-click to open file</span>';
   tooltip.style.display = 'block';
   positionTooltip(ev);
 }
@@ -306,7 +354,7 @@ function positionTooltip(ev) {
 }
 function hideTooltip() { tooltip.style.display = 'none'; }
 
-// --- pan / zoom state ---
+// pan / zoom
 let viewX = 0, viewY = 0, viewScale = 1;
 function applyViewport(animated) {
   if (animated) {
@@ -317,17 +365,18 @@ function applyViewport(animated) {
   zoomLabel.textContent = Math.round(viewScale * 100) + '%';
 }
 
+viewX = W/2 - 160;
+viewY = 0;
+applyViewport(false);
+
 svg.addEventListener('wheel', (ev) => {
   ev.preventDefault();
   const rect = svg.getBoundingClientRect();
-  const mx = ev.clientX - rect.left;
-  const my = ev.clientY - rect.top;
+  const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
   const zoomFactor = ev.deltaY < 0 ? 1.12 : 0.89;
-  const newScale = Math.min(5, Math.max(0.15, viewScale * zoomFactor));
-  const worldX = (mx - viewX) / viewScale;
-  const worldY = (my - viewY) / viewScale;
-  viewX = mx - worldX * newScale;
-  viewY = my - worldY * newScale;
+  const newScale = Math.min(5, Math.max(0.1, viewScale * zoomFactor));
+  const worldX = (mx - viewX) / viewScale, worldY = (my - viewY) / viewScale;
+  viewX = mx - worldX * newScale; viewY = my - worldY * newScale;
   viewScale = newScale;
   applyViewport(false);
 }, { passive: false });
@@ -342,11 +391,10 @@ svg.addEventListener('mousedown', (ev) => {
   }
 });
 window.addEventListener('mousemove', (ev) => {
-  if (!panning) return;
+  if (!panning) { return; }
   const dx = ev.clientX - panStart.x, dy = ev.clientY - panStart.y;
-  if (Math.abs(dx) > 3 || Math.abs(dy) > 3) panMoved = true;
-  viewX = viewStart.x + dx;
-  viewY = viewStart.y + dy;
+  if (Math.abs(dx) > 3 || Math.abs(dy) > 3) { panMoved = true; }
+  viewX = viewStart.x + dx; viewY = viewStart.y + dy;
   applyViewport(false);
 });
 window.addEventListener('mouseup', () => { panning = false; svg.style.cursor = 'grab'; });
@@ -358,11 +406,10 @@ function selectNode(id) {
   if (!activeId) {
     nodeGroups.forEach(ng => { ng.el.classList.remove('dim'); ng.el.classList.remove('active'); });
     edgeEls.forEach(ee => {
-      ee.el.classList.remove('dim');
-      ee.el.classList.remove('active');
+      ee.el.classList.remove('dim'); ee.el.classList.remove('active');
       ee.el.setAttribute('marker-end', 'url(#' + markerId(ee.data.type, null) + ')');
     });
-    viewX = 0; viewY = 0; viewScale = 1;
+    viewX = W/2 - 160; viewY = 0; viewScale = 1;
     applyViewport(true);
     return;
   }
@@ -370,11 +417,9 @@ function selectNode(id) {
   const connected = new Set([activeId]);
   edgeEls.forEach(ee => {
     if (ee.data.source === activeId || ee.data.target === activeId) {
-      connected.add(ee.data.source);
-      connected.add(ee.data.target);
+      connected.add(ee.data.source); connected.add(ee.data.target);
     }
   });
-
   nodeGroups.forEach(ng => {
     const isConnected = connected.has(ng.data.id);
     ng.el.classList.toggle('dim', !isConnected);
@@ -388,10 +433,9 @@ function selectNode(id) {
   });
 
   const target = nodeById[activeId];
-  const targetScale = 2.4;
-  viewScale = targetScale;
-  viewX = W/2 - target.x * targetScale;
-  viewY = H/2 - target.y * targetScale;
+  viewScale = 2.2;
+  viewX = W/2 - target.x * viewScale;
+  viewY = H/2 - target.y * viewScale;
   applyViewport(true);
 }
 
@@ -399,7 +443,6 @@ svg.addEventListener('click', () => {
   if (panMoved) { panMoved = false; return; }
   selectNode(null);
 });
-
 resetBtn.addEventListener('click', () => selectNode(null));
 </script>
 </body>
