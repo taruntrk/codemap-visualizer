@@ -134,7 +134,7 @@ export class CodeMapPanel {
   <div>&#9679; <b>Gold ring</b> = entry point (not imported by anything)</div>
   <div><span class="legend-line" style="border-color:#569cd6"></span>Import connection</div>
   <div><span class="legend-line" style="border-color:#ce9178; border-top-style:dashed;"></span>Function call connection</div>
-  <div class="muted" style="opacity:0.6;">Click = isolate &amp; zoom &middot; <b>Double-click = open file</b> &middot; drag to move &middot; scroll to zoom</div>
+  <div class="muted" style="opacity:0.6;">Click = isolate &amp; zoom &middot; <b>Ctrl+Click = open file</b> &middot; drag to move &middot; scroll to zoom</div>
   <button id="resetBtn">Reset View</button>
 </div>
 <div id="tooltip"></div>
@@ -314,13 +314,14 @@ for (const n of nodes) {
   g.addEventListener('mousemove', (ev) => positionTooltip(ev));
   g.addEventListener('mouseleave', hideTooltip);
 
-  // single click — isolate + zoom
-  g.addEventListener('click', (ev) => { ev.stopPropagation(); selectNode(n.id); });
-
-  // double click — open file in VS Code editor
-  g.addEventListener('dblclick', (ev) => {
+  // click — Ctrl+Click = open file, normal click = isolate + zoom
+  g.addEventListener('click', (ev) => {
     ev.stopPropagation();
-    vscode.postMessage({ command: 'openFile', fileId: n.id });
+    if (ev.ctrlKey || ev.metaKey) {
+      vscode.postMessage({ command: 'openFile', fileId: n.id });
+    } else {
+      selectNode(n.id);
+    }
   });
 
   // drag to reposition node
@@ -344,7 +345,7 @@ function showTooltip(ev, n) {
     '<span class="muted">' + (n.folderPath || '(root)') + ' &middot; layer ' + layer[n.id] + '</span><br/>' +
     'LOC: ' + n.loc + ' &nbsp; Functions: ' + (n.functions?.length||0) + ' &nbsp; Imports: ' + (n.imports?.length||0) +
     (funcs ? '<br/><span class="func">' + funcs + '</span>' : '') +
-    '<br/><span class="dblclick-hint">&#128196; Double-click to open file</span>';
+    '<br/><span class="dblclick-hint">&#128196; Ctrl+Click to open file</span>';
   tooltip.style.display = 'block';
   positionTooltip(ev);
 }
