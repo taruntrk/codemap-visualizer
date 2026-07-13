@@ -171,11 +171,75 @@ grammars/
 
 ---
 
-## Requirements
+## Requirements & Dependencies
 
-- VS Code `^1.115.0`
-- Node.js (for building)
-- No runtime dependencies — tree-sitter WASM parsers are bundled
+### For Using the Extension
+- **VS Code** `^1.115.0` — minimum version required
+- **No manual installs needed** — everything is bundled inside the extension
+
+### For Development / Building from Source
+
+**System Requirements:**
+- **Node.js** `v18+` — [Download](https://nodejs.org)
+- **npm** `v8+` — comes with Node.js
+- **Git** — for cloning
+
+**Install all dependencies:**
+```bash
+git clone https://github.com/taruntrk/codemap-visualizer.git
+cd codemap-visualizer
+npm install
+```
+
+**Runtime dependencies** (bundled automatically):
+
+| Package | Version | Purpose |
+|---|---|---|
+| `web-tree-sitter` | `^0.26.10` | WASM-based parser engine |
+| `tree-sitter-python` | `^0.25.0` | Python grammar for tree-sitter |
+
+**Dev dependencies** (only needed for building):
+
+| Package | Version | Purpose |
+|---|---|---|
+| `esbuild` | `^0.28.1` | Bundler — compiles TS to single JS file |
+| `typescript` | `^6.0.3` | TypeScript compiler |
+| `typescript-eslint` | `^8.61.1` | Linting |
+| `eslint` | `^10.5.0` | Code quality |
+| `npm-run-all` | `^4.1.5` | Run multiple npm scripts |
+| `@types/vscode` | `^1.125.0` | VS Code API type definitions |
+| `@types/node` | `24.x` | Node.js type definitions |
+| `@types/mocha` | `^10.0.10` | Test type definitions |
+| `@vscode/test-cli` | `^0.0.15` | VS Code test runner |
+| `@vscode/test-electron` | `^3.0.0` | Electron-based test environment |
+
+**Bundled WASM grammars** (no install needed, already in `/grammars`):
+
+| File | Purpose |
+|---|---|
+| `web-tree-sitter.wasm` | Core tree-sitter engine |
+| `tree-sitter-typescript.wasm` | TypeScript/TSX parsing |
+| `tree-sitter-javascript.wasm` | JavaScript/JSX parsing |
+| `tree-sitter-python.wasm` | Python parsing |
+
+**Build commands:**
+```bash
+# Development build
+node esbuild.js
+
+# Production build (minified)
+node esbuild.js --production
+
+# Watch mode (auto-rebuild on save)
+node esbuild.js --watch
+```
+
+**To publish on VS Code Marketplace:**
+```bash
+npm install -g @vscode/vsce
+vsce login <publisher-name>
+vsce publish
+```
 
 ---
 

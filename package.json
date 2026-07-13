@@ -1,13 +1,22 @@
 {
   "name": "codemap-visualizer",
-  "displayName": "codemap-visualizer",
-  "description": "Visualize codebase structure, file connections, and function-level dependencies as an interactive map",
+  "displayName": "CodeMap Visualizer",
+  "publisher": "taruntrk",
+  "description": "Visualize your entire codebase as an interactive map — files, folders, imports, function calls, CSS, environment variables, and database connections.",
   "version": "0.0.1",
   "engines": {
     "vscode": "^1.115.0"
   },
   "categories": [
+    "Visualization",
     "Other"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/taruntrk/codemap-visualizer.git"
+  },
+  "keywords": [
+    "codebase", "visualizer", "graph", "dependency", "map", "imports"
   ],
   "activationEvents": [],
   "main": "./dist/extension.js",
