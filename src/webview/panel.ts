@@ -22,21 +22,21 @@ export class CodeMapPanel {
             'codemapVisualizer',
             'CodeMap Visualizer',
             column || vscode.ViewColumn.One,
-            {
-                enableScripts: true,
-                retainContextWhenHidden: true,
-            }
+            { enableScripts: true, retainContextWhenHidden: true }
         );
 
         CodeMapPanel.currentPanel = new CodeMapPanel(panel, graph, rootPath);
     }
 
-    private constructor(panel: vscode.WebviewPanel, graph: CodeGraph, private readonly rootPath: string) {
+    private constructor(
+        panel: vscode.WebviewPanel,
+        graph: CodeGraph,
+        private readonly rootPath: string
+    ) {
         this.panel = panel;
         this.update(graph);
         this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
 
-        // Message handler — double click se file open karne ke liye
         this.panel.webview.onDidReceiveMessage(
             async (message) => {
                 if (message.command === 'openFile') {
@@ -45,7 +45,7 @@ export class CodeMapPanel {
                         const uri = vscode.Uri.file(fullPath);
                         const doc = await vscode.workspace.openTextDocument(uri);
                         await vscode.window.showTextDocument(doc, vscode.ViewColumn.Beside);
-                    } catch (err) {
+                    } catch (_err) {
                         vscode.window.showErrorMessage(`Could not open file: ${message.fileId}`);
                     }
                 }
@@ -65,389 +65,1112 @@ export class CodeMapPanel {
         this.panel.dispose();
         while (this.disposables.length) {
             const d = this.disposables.pop();
-            if (d) {
-                d.dispose();
-            }
+            if (d) { d.dispose(); }
         }
     }
 
     private getHtml(graph: CodeGraph): string {
         const graphJson = JSON.stringify(graph).replace(/</g, '\\u003c');
+        return buildHtml(graphJson);
+    }
+}
 
-        return /* html */ `<!DOCTYPE html>
+function buildHtml(graphJson: string): string {
+    return `<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
+<meta charset="UTF-8"/>
 <style>
-  html, body {
-    margin:0; padding:0; height:100%; overflow:hidden;
-    font-family: -apple-system, sans-serif; color:#ddd;
-    background: radial-gradient(circle at 50% 40%, #262626 0%, #151515 75%);
-  }
-  #toolbar {
-    position:fixed; top:8px; left:8px; z-index:10; background:rgba(37,37,38,0.9);
-    backdrop-filter: blur(6px); padding:8px 12px; border-radius:8px; font-size:12px;
-    border:1px solid #3c3c3c; max-width:440px;
-  }
-  #toolbar div { margin-bottom:4px; }
-  .legend-line { display:inline-block; width:16px; height:0; border-top:2px solid; margin-right:6px; vertical-align:middle; }
-  #resetBtn {
-    margin-top:4px; background:#0e639c; border:none; color:#fff; padding:4px 10px;
-    border-radius:4px; cursor:pointer; font-size:11px;
-  }
-  #resetBtn:hover { background:#1177bb; }
-  svg { width:100vw; height:100vh; display:block; cursor:grab; }
-  #viewport.animate { transition: transform 0.6s cubic-bezier(0.22, 1, 0.36, 1); }
-
-  .layer-label { fill:#888; font-size:12px; font-weight:600; pointer-events:none; opacity:0.55; text-anchor:middle; }
-  .layer-divider { stroke:#3c3c3c; stroke-width:1; opacity:0.4; }
-
-  .node .core { stroke:#fff; stroke-width:1px; cursor:pointer; transition: filter 0.2s ease, stroke-width 0.2s ease; }
-  .node .glow { filter: blur(6px); transition: opacity 0.25s ease; pointer-events:none; }
-  .node:hover .core { filter: drop-shadow(0 0 8px currentColor); }
-  .node.active .core { stroke-width:2.5px; filter: drop-shadow(0 0 16px #fff); }
-  .node.active .glow { opacity:0.6; }
-  .node.dim { opacity:0.06; }
-  .node text { fill:#eee; font-size:10px; pointer-events:none; }
-  .node.entry .core { stroke:#ffd700; stroke-width:2px; }
-
-  .edge-import { stroke:#569cd6; stroke-width:1.3px; opacity:0.5; fill:none; transition: opacity 0.3s ease, stroke-width 0.3s ease, filter 0.3s ease; }
-  .edge-call { stroke:#ce9178; stroke-width:1px; stroke-dasharray:4,3; opacity:0.4; fill:none; transition: opacity 0.3s ease, stroke-width 0.3s ease, filter 0.3s ease; }
-  .edge-import.active { stroke-width:2.6px; opacity:0.95; filter: drop-shadow(0 0 5px #569cd6); }
-  .edge-call.active { stroke-width:2px; opacity:0.9; filter: drop-shadow(0 0 5px #ce9178); }
-  .edge-import.dim, .edge-call.dim { opacity:0.03; }
-
-  #tooltip {
-    position:fixed; pointer-events:none; background:rgba(37,37,38,0.95); border:1px solid #454545;
-    padding:8px 10px; border-radius:6px; font-size:12px; max-width:340px; display:none; z-index:20;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.6);
-  }
-  #tooltip b { color:#4fc1ff; }
-  #tooltip .func { color:#9cdcfe; }
-  #tooltip .muted { opacity:0.65; }
-  #tooltip .dblclick-hint { color:#b5cea8; font-style:italic; margin-top:4px; }
-  #zoomLabel { position:fixed; bottom:8px; left:8px; font-size:11px; opacity:0.5; z-index:10; }
+${getCss()}
 </style>
 </head>
 <body>
-<div id="toolbar">
-  <div>&#9679; <b>Gold ring</b> = entry point (not imported by anything)</div>
-  <div><span class="legend-line" style="border-color:#569cd6"></span>Import connection</div>
-  <div><span class="legend-line" style="border-color:#ce9178; border-top-style:dashed;"></span>Function call connection</div>
-  <div class="muted" style="opacity:0.6;">Click = isolate &amp; zoom &middot; <b>Ctrl+Click = open file</b> &middot; drag to move &middot; scroll to zoom</div>
-  <button id="resetBtn">Reset View</button>
-</div>
+${getToolbar()}
 <div id="tooltip"></div>
 <div id="zoomLabel">100%</div>
 <svg id="graph">
-  <defs>
-    <marker id="arrow-import" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
-      <path d="M0,0 L10,5 L0,10 z" fill="#569cd6"></path>
-    </marker>
-    <marker id="arrow-import-active" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
-      <path d="M0,0 L10,5 L0,10 z" fill="#9cdcfe"></path>
-    </marker>
-    <marker id="arrow-import-dim" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
-      <path d="M0,0 L10,5 L0,10 z" fill="#569cd6" opacity="0.08"></path>
-    </marker>
-    <marker id="arrow-call" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto">
-      <path d="M0,0 L10,5 L0,10 z" fill="#ce9178"></path>
-    </marker>
-    <marker id="arrow-call-active" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
-      <path d="M0,0 L10,5 L0,10 z" fill="#ffc4a3"></path>
-    </marker>
-    <marker id="arrow-call-dim" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto">
-      <path d="M0,0 L10,5 L0,10 z" fill="#ce9178" opacity="0.08"></path>
-    </marker>
-  </defs>
+${getSvgDefs()}
   <g id="viewport"></g>
 </svg>
-
 <script>
-const graph = ${graphJson};
-const vscode = acquireVsCodeApi();
-const svg = document.getElementById('graph');
-const viewport = document.getElementById('viewport');
-const tooltip = document.getElementById('tooltip');
-const zoomLabel = document.getElementById('zoomLabel');
-const resetBtn = document.getElementById('resetBtn');
-const W = window.innerWidth;
-const H = window.innerHeight;
-const svgNS = "http://www.w3.org/2000/svg";
+${getJs1(graphJson)}
+${getJs2()}
+${getJs3()}
+</script>
+</body>
+</html>`;
+}
 
-function el(tag, attrs) {
-  const e = document.createElementNS(svgNS, tag);
+function getCss(): string {
+    return `
+html, body {
+  margin:0; padding:0; height:100%; overflow:hidden;
+  font-family: -apple-system, sans-serif; color:#ddd;
+  background: radial-gradient(circle at 50% 40%, #1e1e2e 0%, #111118 80%);
+}
+#toolbar {
+  position:fixed; top:10px; left:10px; z-index:10;
+  background:rgba(30,30,46,0.92); backdrop-filter:blur(8px);
+  padding:8px 14px; border-radius:10px; font-size:12px;
+  border:1px solid #3c3c5a; max-width:460px; line-height:1.7;
+}
+.legend-dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:5px; vertical-align:middle; }
+.legend-line { display:inline-block; width:18px; height:0; border-top:2px solid; margin-right:6px; vertical-align:middle; }
+#resetBtn {
+  margin-top:6px; background:#0e639c; border:none; color:#fff;
+  padding:4px 12px; border-radius:5px; cursor:pointer; font-size:11px;
+}
+#resetBtn:hover { background:#1177bb; }
+svg { width:100vw; height:100vh; display:block; cursor:grab; }
+#viewport.animate { transition:transform 0.55s cubic-bezier(0.22,1,0.36,1); }
+
+/* folder boxes */
+.folder-box { fill:none; rx:10; ry:10; stroke-width:1.5px; opacity:0.18; pointer-events:none; transition:opacity 0.35s, filter 0.35s, height 0.3s; }
+.folder-box.active { opacity:0.6; filter:drop-shadow(0 0 10px currentColor); }
+.folder-box.dim { opacity:0.04; }
+.folder-box:hover { opacity:0.4; cursor:grab; }
+.folder-label { font-size:11px; font-weight:700; pointer-events:none; opacity:0.7; transition:opacity 0.35s; }
+.folder-label.dim { opacity:0.08; }
+
+/* file nodes */
+.node rect.core {
+  rx:4; ry:4; stroke:#ffffff44; stroke-width:1px; cursor:pointer;
+  transition: filter 0.2s, stroke-width 0.2s;
+}
+.node:hover rect.core { filter:drop-shadow(0 0 7px var(--nc)); stroke:#ffffffaa; }
+.node.active rect.core { stroke-width:2px; filter:drop-shadow(0 0 14px var(--nc)); }
+.node.dim { opacity:0.05; transition:opacity 0.4s; }
+.node { transition:opacity 0.4s; }
+.node.entry rect.core { stroke:#ffd700; stroke-width:2px; }
+.node.unused rect.core { fill:#ff000022 !important; stroke:#e05555 !important; stroke-width:1.5px !important; }
+.node.unused text { fill:#ff9090; }
+.node text { fill:#e0e0e0; font-size:10px; pointer-events:none; }
+
+/* folder-to-folder edges */
+.f2f-edge { fill:none; stroke-width:1.5px; opacity:0.3; transition:opacity 0.4s, filter 0.4s, stroke-width 0.4s; }
+.f2f-edge.active { opacity:0.85; filter:drop-shadow(0 0 5px currentColor); }
+.f2f-edge.dim { opacity:0.03; }
+
+/* file edges */
+.edge-import { stroke:#569cd6; stroke-width:0.8px; opacity:0.4; fill:none; transition:opacity 0.4s,stroke-width 0.4s,filter 0.4s; }
+.edge-call   { stroke:#ce9178; stroke-width:0.7px; stroke-dasharray:4,3; opacity:0.3; fill:none; transition:opacity 0.4s,stroke-width 0.4s,filter 0.4s; }
+.edge-import.active { stroke-width:1.8px; opacity:0.95; filter:drop-shadow(0 0 4px #569cd6); }
+.edge-call.active   { stroke-width:1.4px; opacity:0.9;  filter:drop-shadow(0 0 4px #ce9178); }
+.edge-import.dim, .edge-call.dim { opacity:0.03; }
+
+/* special edges */
+.edge-css-import { stroke:#c586c0; stroke-width:0.8px; stroke-dasharray:5,3; opacity:0.4; fill:none; transition:opacity 0.4s,stroke-width 0.4s; }
+.edge-env-use    { stroke:#dcdcaa; stroke-width:0.8px; stroke-dasharray:3,3; opacity:0.4; fill:none; transition:opacity 0.4s,stroke-width 0.4s; }
+.edge-db-use     { stroke:#4ec9b0; stroke-width:1px;   opacity:0.45; fill:none; transition:opacity 0.4s,stroke-width 0.4s; }
+.edge-css-import.active { stroke-width:1.6px; opacity:0.9; filter:drop-shadow(0 0 4px #c586c0); }
+.edge-env-use.active    { stroke-width:1.6px; opacity:0.9; filter:drop-shadow(0 0 4px #dcdcaa); }
+.edge-db-use.active     { stroke-width:2px;   opacity:0.95; filter:drop-shadow(0 0 5px #4ec9b0); }
+.edge-css-import.dim, .edge-env-use.dim, .edge-db-use.dim { opacity:0.03; }
+
+/* special nodes */
+.special-node rect.core { stroke-width:1.5px !important; }
+.special-node text { fill:#e0e0e0; font-size:10px; pointer-events:none; }
+
+/* tooltip */
+#tooltip {
+  position:fixed; pointer-events:none; background:rgba(30,30,46,0.97);
+  border:1px solid #4c4c7a; padding:8px 12px; border-radius:8px;
+  font-size:12px; max-width:340px; display:none; z-index:20;
+  box-shadow:0 4px 20px rgba(0,0,0,0.7); line-height:1.6;
+}
+#tooltip b   { color:#4fc1ff; }
+#tooltip .fn { color:#9cdcfe; }
+#tooltip .mt { opacity:0.6; font-size:11px; }
+#tooltip .hint { color:#b5cea8; font-style:italic; margin-top:4px; font-size:11px; }
+#zoomLabel { position:fixed; bottom:8px; left:10px; font-size:11px; opacity:0.45; z-index:10; }
+`;
+}
+
+function getToolbar(): string {
+    return `
+<div id="toolbar">
+  <div><span class="legend-dot" style="background:#ffd700;border:1px solid #ffd700"></span><b>Gold border</b> = entry &nbsp;
+       <span class="legend-dot" style="background:#e05555"></span><b style="color:#ff9090">Red</b> = unused &nbsp;
+       <span class="legend-dot" style="background:#c586c0"></span>CSS &nbsp;
+       <span class="legend-dot" style="background:#dcdcaa"></span>ENV &nbsp;
+       <span class="legend-dot" style="background:#4ec9b0"></span>DB</div>
+  <div><span class="legend-line" style="border-color:#569cd6"></span>Import &nbsp;
+       <span class="legend-line" style="border-color:#ce9178;border-style:dashed"></span>Call &nbsp;
+       <span class="legend-line" style="border-color:#4ec9b0"></span>DB use &nbsp;
+       <span class="legend-line" style="border-color:#dcdcaa;border-style:dashed"></span>Env use</div>
+  <div style="opacity:0.6;font-size:11px;">Click = isolate &middot; <b>Dbl-click folder</b> = collapse/expand &middot; <b>Ctrl+Click</b> = open file &middot; Drag node/folder &middot; Scroll = zoom</div>
+  <button id="resetBtn">&#8635; Reset View</button>
+</div>`;
+}
+
+function getSvgDefs(): string {
+    return `  <defs>
+    <marker id="dot-import"     viewBox="0 0 10 10" refX="5" refY="5" markerWidth="4" markerHeight="4" orient="auto"><circle cx="5" cy="5" r="3.5" fill="#569cd6"/></marker>
+    <marker id="dot-import-act" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="5" markerHeight="5" orient="auto"><circle cx="5" cy="5" r="3.5" fill="#9cdcfe"/></marker>
+    <marker id="dot-import-dim" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="4" markerHeight="4" orient="auto"><circle cx="5" cy="5" r="3.5" fill="#569cd6" opacity="0.08"/></marker>
+    <marker id="dot-call"       viewBox="0 0 10 10" refX="5" refY="5" markerWidth="3" markerHeight="3" orient="auto"><circle cx="5" cy="5" r="3.5" fill="#ce9178"/></marker>
+    <marker id="dot-call-act"   viewBox="0 0 10 10" refX="5" refY="5" markerWidth="4" markerHeight="4" orient="auto"><circle cx="5" cy="5" r="3.5" fill="#ffc4a3"/></marker>
+    <marker id="dot-call-dim"   viewBox="0 0 10 10" refX="5" refY="5" markerWidth="3" markerHeight="3" orient="auto"><circle cx="5" cy="5" r="3.5" fill="#ce9178" opacity="0.08"/></marker>
+    <marker id="dot-f2f"        viewBox="0 0 10 10" refX="5" refY="5" markerWidth="4" markerHeight="4" orient="auto"><circle cx="5" cy="5" r="3.5" fill="#c586c0"/></marker>
+    <marker id="dot-f2f-act"    viewBox="0 0 10 10" refX="5" refY="5" markerWidth="5" markerHeight="5" orient="auto"><circle cx="5" cy="5" r="3.5" fill="#e8b4e8"/></marker>
+    <marker id="dot-f2f-dim"    viewBox="0 0 10 10" refX="5" refY="5" markerWidth="4" markerHeight="4" orient="auto"><circle cx="5" cy="5" r="3.5" fill="#c586c0" opacity="0.08"/></marker>
+    <marker id="dot-css"        viewBox="0 0 10 10" refX="5" refY="5" markerWidth="4" markerHeight="4" orient="auto"><circle cx="5" cy="5" r="3.5" fill="#c586c0"/></marker>
+    <marker id="dot-env"        viewBox="0 0 10 10" refX="5" refY="5" markerWidth="4" markerHeight="4" orient="auto"><circle cx="5" cy="5" r="3.5" fill="#dcdcaa"/></marker>
+    <marker id="dot-db"         viewBox="0 0 10 10" refX="5" refY="5" markerWidth="4" markerHeight="4" orient="auto"><circle cx="5" cy="5" r="3.5" fill="#4ec9b0"/></marker>
+    <marker id="arr-import"       viewBox="0 0 10 10" refX="9" refY="5" markerWidth="4"  markerHeight="4"  orient="auto"><path d="M0,0 L10,5 L0,10z" fill="#569cd6"/></marker>
+    <marker id="arr-import-act"   viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5"  markerHeight="5"  orient="auto"><path d="M0,0 L10,5 L0,10z" fill="#9cdcfe"/></marker>
+    <marker id="arr-import-dim"   viewBox="0 0 10 10" refX="9" refY="5" markerWidth="4"  markerHeight="4"  orient="auto"><path d="M0,0 L10,5 L0,10z" fill="#569cd6" opacity="0.08"/></marker>
+    <marker id="arr-call"         viewBox="0 0 10 10" refX="9" refY="5" markerWidth="3"  markerHeight="3"  orient="auto"><path d="M0,0 L10,5 L0,10z" fill="#ce9178"/></marker>
+    <marker id="arr-call-act"     viewBox="0 0 10 10" refX="9" refY="5" markerWidth="4"  markerHeight="4"  orient="auto"><path d="M0,0 L10,5 L0,10z" fill="#ffc4a3"/></marker>
+    <marker id="arr-call-dim"     viewBox="0 0 10 10" refX="9" refY="5" markerWidth="3"  markerHeight="3"  orient="auto"><path d="M0,0 L10,5 L0,10z" fill="#ce9178" opacity="0.08"/></marker>
+    <marker id="arr-f2f"          viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5"  markerHeight="5"  orient="auto"><path d="M0,0 L10,5 L0,10z" fill="#c586c0"/></marker>
+    <marker id="arr-f2f-act"      viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6"  markerHeight="6"  orient="auto"><path d="M0,0 L10,5 L0,10z" fill="#e8b4e8"/></marker>
+    <marker id="arr-f2f-dim"      viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5"  markerHeight="5"  orient="auto"><path d="M0,0 L10,5 L0,10z" fill="#c586c0" opacity="0.08"/></marker>
+    <marker id="arr-css"          viewBox="0 0 10 10" refX="9" refY="5" markerWidth="4"  markerHeight="4"  orient="auto"><path d="M0,0 L10,5 L0,10z" fill="#c586c0"/></marker>
+    <marker id="arr-env"          viewBox="0 0 10 10" refX="9" refY="5" markerWidth="4"  markerHeight="4"  orient="auto"><path d="M0,0 L10,5 L0,10z" fill="#dcdcaa"/></marker>
+    <marker id="arr-db"           viewBox="0 0 10 10" refX="9" refY="5" markerWidth="4"  markerHeight="4"  orient="auto"><path d="M0,0 L10,5 L0,10z" fill="#4ec9b0"/></marker>
+  </defs>`;
+}
+
+function getJs1(graphJson: string): string {
+    return `
+const graph = ${graphJson};
+const vsapi = acquireVsCodeApi();
+const svg   = document.getElementById('graph');
+const vp    = document.getElementById('viewport');
+const tip   = document.getElementById('tooltip');
+const zoomLbl = document.getElementById('zoomLabel');
+const resetBtn = document.getElementById('resetBtn');
+const NS = 'http://www.w3.org/2000/svg';
+const W  = window.innerWidth, H = window.innerHeight;
+
+function mkEl(tag, attrs) {
+  const e = document.createElementNS(NS, tag);
   for (const k in attrs) e.setAttribute(k, attrs[k]);
   return e;
 }
 
-function colorForFolder(folder) {
-  const palette = ['#4ec9b0','#dcdcaa','#c586c0','#9cdcfe','#d16969','#b5cea8','#ce9178','#569cd6'];
-  let hash = 0;
-  for (let i = 0; i < folder.length; i++) hash = (hash * 31 + folder.charCodeAt(i)) >>> 0;
-  return palette[hash % palette.length];
+// ── palette ──────────────────────────────────────────────
+const PALETTE = ['#4ec9b0','#dcdcaa','#c586c0','#9cdcfe','#d16969','#b5cea8','#ce9178','#569cd6','#f48771','#98c379'];
+function folderColor(fp) {
+  let h = 5381;
+  for (let i = 0; i < fp.length; i++) h = ((h << 5) + h + fp.charCodeAt(i)) >>> 0;
+  return PALETTE[h % PALETTE.length];
 }
 
-const nodes = graph.nodes.map(n => ({ ...n, x: 0, y: 0 }));
-const nodeById = {};
-nodes.forEach(n => nodeById[n.id] = n);
-const nodeRadius = {};
-nodes.forEach(n => { nodeRadius[n.id] = 5 + Math.min(10, (n.functions?.length || 0) * 0.6); });
+// ── node map ──────────────────────────────────────────────
+const nodes = graph.nodes.map(n => ({ ...n, x:0, y:0 }));
+const byId  = {};
+nodes.forEach(n => byId[n.id] = n);
+function nodeW(n) { return Math.max(80, n.fileName.length * 6.5 + 16); }
+function nodeH()  { return 22; }
 
-const edges = graph.edges.map(e => ({...e, s: nodeById[e.source], t: nodeById[e.target]})).filter(e => e.s && e.t);
-const importEdges = edges.filter(e => e.type === 'import');
+// ── edges ─────────────────────────────────────────────────
+const edges = graph.edges
+  .map(e => ({ ...e, s: byId[e.source], t: byId[e.target] }))
+  .filter(e => e.s && e.t);
+const impEdges = edges.filter(e => e.type === 'import');
 
-// layered layout
-const incomingCount = {};
-nodes.forEach(n => incomingCount[n.id] = 0);
-importEdges.forEach(e => incomingCount[e.target] += 1);
-const entryIds = new Set(nodes.filter(n => incomingCount[n.id] === 0).map(n => n.id));
-if (entryIds.size === 0 && nodes.length > 0) { entryIds.add(nodes[0].id); }
+// ── entry / layered topo ──────────────────────────────────
+const inDeg = {};
+nodes.forEach(n => inDeg[n.id] = 0);
+impEdges.forEach(e => inDeg[e.target]++);
+const entryIds = new Set(nodes.filter(n => inDeg[n.id] === 0).map(n => n.id));
+if (entryIds.size === 0 && nodes.length > 0) entryIds.add(nodes[0].id);
 
-const layer = {};
-nodes.forEach(n => layer[n.id] = 0);
-
-const passes = Math.min(nodes.length, 60);
-for (let p = 0; p < passes; p++) {
+const layerOf = {};
+nodes.forEach(n => layerOf[n.id] = 0);
+for (let p = 0; p < Math.min(nodes.length, 80); p++) {
   let changed = false;
-  for (const e of importEdges) {
-    const proposed = layer[e.source] + 1;
-    if (layer[e.target] < proposed) { layer[e.target] = proposed; changed = true; }
+  for (const e of impEdges) {
+    const proposed = layerOf[e.source] + 1;
+    if (layerOf[e.target] < proposed) { layerOf[e.target] = proposed; changed = true; }
   }
-  if (!changed) { break; }
+  if (!changed) break;
 }
 
-const layerGroups = {};
+// group nodes by folder, sort by layer then fileName
+const folderMap = {};
 nodes.forEach(n => {
-  const l = layer[n.id];
-  (layerGroups[l] = layerGroups[l] || []).push(n);
+  const fp = n.folderPath || '(root)';
+  // special nodes get their own section — not in folder grid
+  if (n.nodeType === 'css' || n.nodeType === 'env' || n.nodeType === 'database') return;
+  (folderMap[fp] = folderMap[fp] || []).push(n);
 });
-Object.values(layerGroups).forEach(group => {
-  group.sort((a, b) => (a.folderPath + a.fileName).localeCompare(b.folderPath + b.fileName));
+const folders = Object.keys(folderMap).sort();
+
+// ── layout: folders in a grid ─────────────────────────────
+const COLS       = Math.ceil(Math.sqrt(folders.length + 1));
+const FPAD       = 22;   // padding inside folder box
+const FGAP_X     = 110;  // gap between folder columns
+const FGAP_Y     = 80;   // gap between folder rows
+const NODE_GAP_Y = 12;   // vertical gap between nodes inside folder
+
+// compute each folder box size
+const fboxes = {};  // fp -> { x, y, w, h, color }
+folders.forEach((fp, fi) => {
+  const ns  = folderMap[fp];
+  const maxW = Math.max(...ns.map(n => nodeW(n)));
+  const bw   = maxW + FPAD * 2;
+  const bh   = ns.length * (nodeH() + NODE_GAP_Y) + FPAD * 2 + 18; // 18 for label
+  fboxes[fp] = { w: bw, h: bh, color: folderColor(fp), col: fi % COLS, row: Math.floor(fi / COLS) };
 });
 
-const colSpacing = 260;
-const rowSpacing = 64;
-const layerKeys = Object.keys(layerGroups).map(Number).sort((a,b) => a-b);
-layerKeys.forEach(l => {
-  const group = layerGroups[l];
-  const totalHeight = group.length * rowSpacing;
-  group.forEach((n, i) => {
-    n.x = 160 + l * colSpacing;
-    n.y = (H/2 - totalHeight/2) + i * rowSpacing + rowSpacing/2;
+// compute max width/height per grid cell
+const colW = {}, rowH = {};
+folders.forEach(fp => {
+  const fb = fboxes[fp];
+  colW[fb.col] = Math.max(colW[fb.col] || 0, fb.w);
+  rowH[fb.row] = Math.max(rowH[fb.row] || 0, fb.h);
+});
+
+// assign x/y to folder boxes and nodes inside them
+const colX = {}, rowY = {};
+let cx = FGAP_X;
+for (let c = 0; c < COLS; c++) { colX[c] = cx; cx += (colW[c] || 0) + FGAP_X; }
+let cy = 60;
+const maxRow = Math.max(...folders.map(fp => fboxes[fp].row), 0);
+for (let r = 0; r <= maxRow; r++) { rowY[r] = cy; cy += (rowH[r] || 0) + FGAP_Y; }
+
+folders.forEach(fp => {
+  const fb = fboxes[fp];
+  fb.x = colX[fb.col]; fb.y = rowY[fb.row];
+  const ns = folderMap[fp];
+  ns.sort((a, b) => (layerOf[a.id] - layerOf[b.id]) || a.fileName.localeCompare(b.fileName));
+  ns.forEach((n, i) => {
+    n.x = fb.x + FPAD;
+    n.y = fb.y + 22 + FPAD + i * (nodeH() + NODE_GAP_Y);  // 22 = label height
   });
 });
 
-const nodeGroups = [];
-const edgeEls = [];
+// ── folder-to-folder edge set ─────────────────────────────
+const f2fSet = new Map();  // "A->B" -> { sf, tf, color, count }
+edges.forEach(e => {
+  const sf = e.s.folderPath || '(root)';
+  const tf = e.t.folderPath || '(root)';
+  if (sf === tf) return;
+  const key = sf + '|||' + tf;
+  if (!f2fSet.has(key)) f2fSet.set(key, { sf, tf, count: 0 });
+  f2fSet.get(key).count++;
+});
+const f2fEdges = Array.from(f2fSet.values());
 
-function markerId(type, state) {
-  const base = type === 'import' ? 'arrow-import' : 'arrow-call';
-  return state ? base + '-' + state : base;
+// ── special nodes (css / env / database) layout ───────────
+// These sit in a horizontal strip below the main folder grid
+const cssNodes = nodes.filter(n => n.nodeType === 'css');
+const envNodes = nodes.filter(n => n.nodeType === 'env');
+const dbNodes  = nodes.filter(n => n.nodeType === 'database');
+
+// find bottom of folder grid
+const folderBottoms = folders.map(fp => { const fb = fboxes[fp]; return fb ? fb.y + fb.h : 0; });
+const gridBottom = folderBottoms.length ? Math.max(...folderBottoms) : H / 2;
+const specialY   = gridBottom + 90;  // 90px gap below folder grid
+
+const SPECIAL_COL_GAP = 30;
+const SPECIAL_NODE_H  = 28;
+const SPECIAL_NODE_W  = 160;
+const SPECIAL_PAD     = 14;
+
+// helper: layout a group of special nodes into a section box
+function layoutSpecialGroup(snodes, startX, y, color) {
+  if (!snodes.length) return { x: startX, y, w: 0, h: 0, endX: startX };
+  const bw = SPECIAL_NODE_W + SPECIAL_PAD * 2;
+  const bh = snodes.length * (SPECIAL_NODE_H + 6) + SPECIAL_PAD * 2 + 20;
+  snodes.forEach((n, i) => {
+    n.x = startX + SPECIAL_PAD;
+    n.y = y + 20 + SPECIAL_PAD + i * (SPECIAL_NODE_H + 6);
+  });
+  return { x: startX, y, w: bw, h: bh, color, endX: startX + bw };
 }
 
-function computeEdgeEndpoints(e) {
-  // swap: target se source ki taraf arrow (data flow direction)
-  const dx = e.s.x - e.t.x, dy = e.s.y - e.t.y;
-  const dist = Math.sqrt(dx*dx + dy*dy) || 0.01;
-  const ux = dx / dist, uy = dy / dist;
-  const rSource = nodeRadius[e.t.id] + 2;
-  const rTarget = nodeRadius[e.s.id] + 6;
-  return {
-    x1: e.t.x + ux * rSource, y1: e.t.y + uy * rSource,
-    x2: e.s.x - ux * rTarget, y2: e.s.y - uy * rTarget,
-  };
+let sx = FGAP_X;
+const cssBox = layoutSpecialGroup(cssNodes,  sx,           specialY, '#c586c0');
+sx = cssBox.endX + (cssBox.w ? SPECIAL_COL_GAP : 0);
+const envBox = layoutSpecialGroup(envNodes,  sx,           specialY, '#dcdcaa');
+sx = envBox.endX + (envBox.w ? SPECIAL_COL_GAP : 0);
+const dbBox  = layoutSpecialGroup(dbNodes,   sx,           specialY, '#4ec9b0');
+
+// ── unused files (no edges at all) ───────────────────────
+const connectedIds = new Set();
+edges.forEach(e => { connectedIds.add(e.source); connectedIds.add(e.target); });
+const unusedIds = new Set(nodes.filter(n => !connectedIds.has(n.id)).map(n => n.id));
+`;
 }
 
-function refreshEdgesFor(nodeId) {
+function getJs2(): string {
+    return `
+// ═══════════════════════════════════════════════
+// DRAWING
+// ═══════════════════════════════════════════════
+
+// track all drawn elements for dim/active toggling
+const folderEls  = {};  // fp -> { box, label, chevron, g }
+const edgeEls    = [];  // { el, data, isF2F }
+const nodeGroups = [];  // { el, data }
+
+const collapsedFolders = new Set();  // folders currently collapsed
+const COLLAPSED_H = 32;              // height when collapsed (just header)
+
+function refreshF2fEdge(ee) {
+  const sf = fboxes[ee.sf], tf = fboxes[ee.tf];
+  if (!sf || !tf) return;
+  const x1 = sf.x + sf.w, y1 = sf.y + sf.h / 2;
+  const x2 = tf.x,        y2 = tf.y + tf.h / 2;
+  const cx1 = x1 + Math.abs(x2 - x1) * 0.5, cy1 = y1;
+  const cx2 = x2 - Math.abs(x2 - x1) * 0.5, cy2 = y2;
+  ee.el.setAttribute('d',
+    'M ' + x1 + ' ' + y1 +
+    ' C ' + cx1 + ' ' + cy1 + ' ' + cx2 + ' ' + cy2 +
+    ' ' + x2 + ' ' + y2
+  );
+}
+
+function setFolderCollapsed(fp, collapsed) {
+  const fb = fboxes[fp];
+  const fe = folderEls[fp];
+  if (!fb || !fe) return;
+
+  if (collapsed) {
+    collapsedFolders.add(fp);
+    fb.h = COLLAPSED_H;
+    fe.box.setAttribute('height', COLLAPSED_H);
+    fe.chevron.textContent = '▶ ';
+    nodeGroups.forEach(ng => {
+      if ((ng.data.folderPath || '(root)') === fp) ng.el.style.display = 'none';
+    });
+  } else {
+    collapsedFolders.delete(fp);
+    fb.h = fb.origH;
+    fe.box.setAttribute('height', fb.h);
+    fe.chevron.textContent = '▼ ';
+    nodeGroups.forEach(ng => {
+      if ((ng.data.folderPath || '(root)') === fp) ng.el.style.display = '';
+    });
+  }
+
+  redrawAllEdges();
+}
+
+// ── master edge redraw — call after any layout change ──
+function redrawAllEdges() {
   edgeEls.forEach(ee => {
-    if (ee.data.source === nodeId || ee.data.target === nodeId) {
-      const pts = computeEdgeEndpoints(ee.data);
-      ee.el.setAttribute('x1', pts.x1); ee.el.setAttribute('y1', pts.y1);
-      ee.el.setAttribute('x2', pts.x2); ee.el.setAttribute('y2', pts.y2);
+    if (ee.isF2F) {
+      refreshF2fEdge(ee);
+      return;
     }
+
+    const e = ee.data;
+    if (!e.s || !e.t) return;
+
+    const srcFp = e.s.folderPath || '(root)';
+    const tgtFp = e.t.folderPath || '(root)';
+    const srcCollapsed = collapsedFolders.has(srcFp);
+    const tgtCollapsed = collapsedFolders.has(tgtFp);
+
+    // both endpoints in same collapsed folder → hide edge
+    if (srcFp === tgtFp && srcCollapsed) {
+      ee.el.style.display = 'none';
+      return;
+    }
+
+    ee.el.style.display = '';
+
+    // get effective x,y for each end
+    let x1, y1, x2, y2;
+    if (srcCollapsed) {
+      const fb = fboxes[srcFp];
+      x1 = fb.x + fb.w / 2; y1 = fb.y + fb.h / 2;
+    } else {
+      const sc = nodeCenter(e.s); x1 = sc.x; y1 = sc.y;
+    }
+    if (tgtCollapsed) {
+      const fb = fboxes[tgtFp];
+      x2 = fb.x + fb.w / 2; y2 = fb.y + fb.h / 2;
+    } else {
+      const tc = nodeCenter(e.t); x2 = tc.x; y2 = tc.y;
+    }
+
+    ee.el.setAttribute('d', bezierPath(x1, y1, x2, y2));
   });
 }
 
-// column headers + dividers
-layerKeys.forEach(l => {
-  const x = 160 + l * colSpacing;
-  const label = el('text', { x: x, y: 34, class: 'layer-label' });
-  label.textContent = l === 0 ? 'Entry point' : 'Layer ' + l;
-  viewport.appendChild(label);
-  const divider = el('line', { x1: x, y1: 50, x2: x, y2: H - 20, class: 'layer-divider' });
-  viewport.appendChild(divider);
+// reroute helper kept for drag use
+function _rerouteEdgeToBox(ee, collapsedFp) {
+  redrawAllEdges();
+}
+
+// ── 1. Folder boxes ───────────────────────────
+folders.forEach(fp => {
+  const fb = fboxes[fp];
+  // store original height for restore on expand
+  fb.origH = fb.h;
+
+  const g = mkEl('g', {});
+
+  const rect = mkEl('rect', {
+    x: fb.x, y: fb.y, width: fb.w, height: fb.h,
+    rx: 10, ry: 10,
+    fill: fb.color, 'fill-opacity': '0.07',
+    stroke: fb.color, 'stroke-width': '1.5',
+    opacity: '0.6'
+  });
+  rect.classList.add('folder-box');
+
+  // chevron icon (▼ expanded, ▶ collapsed)
+  const chevron = mkEl('text', {
+    x: fb.x + 8, y: fb.y + 15,
+    fill: fb.color, 'font-size': '9', opacity: '0.8'
+  });
+  chevron.textContent = '▼ ';
+
+  const lbl = mkEl('text', {
+    x: fb.x + 18, y: fb.y + 15,
+    fill: fb.color, 'font-size': '11', 'font-weight': '700', opacity: '0.8'
+  });
+  lbl.textContent = fp;
+  lbl.classList.add('folder-label');
+
+  g.appendChild(rect);
+  g.appendChild(chevron);
+  g.appendChild(lbl);
+  vp.appendChild(g);
+  folderEls[fp] = { box: rect, label: lbl, chevron, g };
 });
 
-// draw edges
-for (const e of edges) {
-  const pts = computeEdgeEndpoints(e);
-  const line = el('line', {
-    x1: pts.x1, y1: pts.y1, x2: pts.x2, y2: pts.y2,
-    class: e.type === 'import' ? 'edge-import' : 'edge-call',
-    'marker-end': 'url(#' + markerId(e.type, null) + ')'
+// ── 2. Folder-to-folder curved edges ──────────
+f2fEdges.forEach(fe => {
+  const sf = fboxes[fe.sf], tf = fboxes[fe.tf];
+  if (!sf || !tf) return;
+
+  // connect center-right of source to center-left of target
+  const x1 = sf.x + sf.w, y1 = sf.y + sf.h / 2;
+  const x2 = tf.x,        y2 = tf.y + tf.h / 2;
+  const cx1 = x1 + Math.abs(x2 - x1) * 0.5, cy1 = y1;
+  const cx2 = x2 - Math.abs(x2 - x1) * 0.5, cy2 = y2;
+  const d   = 'M ' + x1 + ' ' + y1 + ' C ' + cx1 + ' ' + cy1 + ' ' + cx2 + ' ' + cy2 + ' ' + x2 + ' ' + y2;
+
+  const col = folderColor(fe.sf);
+  const path = mkEl('path', {
+    d: d,
+    stroke: col, 'stroke-width': '1.5', fill: 'none', opacity: '0.3',
+    'marker-start': 'url(#dot-f2f)',
+    'marker-end':   'url(#arr-f2f)'
   });
-  viewport.appendChild(line);
-  edgeEls.push({ el: line, data: e });
+  path.classList.add('f2f-edge');
+  path.style.color = col;
+  vp.insertBefore(path, vp.firstChild);  // draw behind everything
+  edgeEls.push({ el: path, data: fe, isF2F: true, sf: fe.sf, tf: fe.tf });
+});
+
+// ── bezier path between two node centres ──────
+function bezierPath(x1, y1, x2, y2) {
+  const dx = Math.abs(x2 - x1);
+  const cp = Math.max(dx * 0.55, 60);
+  return 'M ' + x1 + ' ' + y1 + ' C ' + (x1 + cp) + ' ' + y1 + ' ' + (x2 - cp) + ' ' + y2 + ' ' + x2 + ' ' + y2;
 }
 
-// draw nodes
-for (const n of nodes) {
-  const color = colorForFolder(n.folderPath || '(root)');
-  const isEntry = entryIds.has(n.id);
-  const g = el('g', {
-    class: 'node' + (isEntry ? ' entry' : ''),
-    transform: 'translate(' + n.x + ',' + n.y + ')',
-    style: 'color:' + color
+function nodeCenter(n) {
+  return { x: n.x + nodeW(n) / 2, y: n.y + nodeH() / 2 };
+}
+
+// ── 3. File-level curved edges ────────────────
+edges.forEach(e => {
+  const sc = nodeCenter(e.s), tc = nodeCenter(e.t);
+  let cls, mid, dotStart;
+  if (e.type === 'import')          { cls = 'edge-import';     mid = 'arr-import'; dotStart = 'dot-import'; }
+  else if (e.type === 'call')       { cls = 'edge-call';       mid = 'arr-call';   dotStart = 'dot-call'; }
+  else if (e.type === 'css-import') { cls = 'edge-css-import'; mid = 'arr-css';    dotStart = 'dot-css'; }
+  else if (e.type === 'env-use')    { cls = 'edge-env-use';    mid = 'arr-env';    dotStart = 'dot-env'; }
+  else if (e.type === 'db-use')     { cls = 'edge-db-use';     mid = 'arr-db';     dotStart = 'dot-db'; }
+  else                              { cls = 'edge-import';     mid = 'arr-import'; dotStart = 'dot-import'; }
+  const path = mkEl('path', {
+    d: bezierPath(sc.x, sc.y, tc.x, tc.y),
+    class: cls,
+    'marker-start': 'url(#' + dotStart + ')',
+    'marker-end':   'url(#' + mid + ')'
   });
-  const radius = nodeRadius[n.id];
-  const glow = el('circle', { r: radius + 5, class: 'glow', fill: color, opacity: 0.22 });
-  const circle = el('circle', { r: radius, class: 'core', fill: color });
-  const label = el('text', { x: radius + 5, y: 3 });
-  label.textContent = n.fileName;
-  g.appendChild(glow);
-  g.appendChild(circle);
-  g.appendChild(label);
-  viewport.appendChild(g);
-  nodeGroups.push({ el: g, data: n, radius });
+  vp.insertBefore(path, vp.firstChild);
+  edgeEls.push({ el: path, data: e, isF2F: false });
+});
 
-  g.addEventListener('mouseenter', (ev) => showTooltip(ev, n));
-  g.addEventListener('mousemove', (ev) => positionTooltip(ev));
-  g.addEventListener('mouseleave', hideTooltip);
+// ── 4. File nodes ─────────────────────────────
+nodes.forEach(n => {
+  const isSpecial = n.nodeType === 'css' || n.nodeType === 'env' || n.nodeType === 'database';
+  if (isSpecial) return;  // special nodes drawn separately below
+  const col    = folderColor(n.folderPath || '(root)');
+  const isEntry  = entryIds.has(n.id);
+  const isUnused = unusedIds.has(n.id);
+  const nw = nodeW(n), nh = nodeH();
 
-  // click — Ctrl+Click = open file, normal click = isolate + zoom
-  g.addEventListener('click', (ev) => {
+  const g = mkEl('g', {
+    class: 'node' + (isEntry ? ' entry' : '') + (isUnused ? ' unused' : ''),
+    transform: 'translate(' + n.x + ',' + n.y + ')',
+    style: '--nc:' + col
+  });
+
+  const bg = mkEl('rect', {
+    x: 0, y: 0, width: nw, height: nh,
+    rx: 4, ry: 4,
+    fill: isUnused ? '#ff000022' : col,
+    'fill-opacity': isUnused ? '1' : '0.22',
+    stroke: isEntry ? '#ffd700' : (isUnused ? '#e05555' : col),
+    'stroke-width': isEntry ? '2' : (isUnused ? '1.5' : '1'),
+    class: 'core'
+  });
+
+  const txt = mkEl('text', { x: 7, y: 15 });
+  txt.textContent = n.fileName;
+
+  g.appendChild(bg);
+  g.appendChild(txt);
+
+  // DB usage badge — small icon if this code file uses a DB client
+  if (n.dbUsage && n.dbUsage.length > 0) {
+    const badge = mkEl('text', { x: nw + 3, y: 15, 'font-size': '11', title: n.dbUsage.join(', ') });
+    badge.textContent = '🗄️';
+    g.appendChild(badge);
+  }
+
+  vp.appendChild(g);
+  nodeGroups.push({ el: g, data: n });
+
+  // tooltip
+  g.addEventListener('mouseenter', ev => showTip(ev, n));
+  g.addEventListener('mousemove',  ev => moveTip(ev));
+  g.addEventListener('mouseleave', hideTip);
+
+  // click handler
+  g.addEventListener('click', ev => {
     ev.stopPropagation();
     if (ev.ctrlKey || ev.metaKey) {
-      vscode.postMessage({ command: 'openFile', fileId: n.id });
+      vsapi.postMessage({ command: 'openFile', fileId: n.id });
     } else {
       selectNode(n.id);
     }
   });
 
-  // drag to reposition node
+  // drag
   let dragging = false;
-  g.addEventListener('mousedown', (ev) => { dragging = true; ev.stopPropagation(); });
-  window.addEventListener('mousemove', (ev) => {
-    if (!dragging) { return; }
-    const rect = svg.getBoundingClientRect();
-    n.x = (ev.clientX - rect.left - viewX) / viewScale;
-    n.y = (ev.clientY - rect.top - viewY) / viewScale;
-    g.setAttribute('transform', 'translate(' + n.x + ',' + n.y + ')');
-    refreshEdgesFor(n.id);
-  });
+  g.addEventListener('mousedown', ev => { dragging = true; ev.stopPropagation(); });
   window.addEventListener('mouseup', () => { dragging = false; });
+  window.addEventListener('mousemove', ev => {
+    if (!dragging) return;
+    const r = svg.getBoundingClientRect();
+    n.x = (ev.clientX - r.left  - viewX) / viewScale;
+    n.y = (ev.clientY - r.top   - viewY) / viewScale;
+    g.setAttribute('transform', 'translate(' + n.x + ',' + n.y + ')');
+    refreshEdges(n.id);
+  });
+});
+
+// ── refresh edge paths after drag ─────────────
+function refreshEdges(nodeId) {
+  edgeEls.forEach(ee => {
+    if (ee.isF2F) return;
+    const e = ee.data;
+    if (e.source !== nodeId && e.target !== nodeId) return;
+    const sc = nodeCenter(e.s), tc = nodeCenter(e.t);
+    ee.el.setAttribute('d', bezierPath(sc.x, sc.y, tc.x, tc.y));
+  });
 }
 
-function showTooltip(ev, n) {
-  const funcs = (n.functions || []).map(f => f.name).slice(0, 12).join(', ');
-  tooltip.innerHTML =
-    '<b>' + n.fileName + '</b>' + (entryIds.has(n.id) ? ' &#11088; entry' : '') + '<br/>' +
-    '<span class="muted">' + (n.folderPath || '(root)') + ' &middot; layer ' + layer[n.id] + '</span><br/>' +
-    'LOC: ' + n.loc + ' &nbsp; Functions: ' + (n.functions?.length||0) + ' &nbsp; Imports: ' + (n.imports?.length||0) +
-    (funcs ? '<br/><span class="func">' + funcs + '</span>' : '') +
-    '<br/><span class="dblclick-hint">&#128196; Ctrl+Click to open file</span>';
-  tooltip.style.display = 'block';
-  positionTooltip(ev);
+// ── 5. Special section boxes (CSS / ENV / DB) ─
+function drawSpecialSection(box, label, icon) {
+  if (!box.w) return;
+  const g = mkEl('g', {});
+  const rect = mkEl('rect', {
+    x: box.x, y: box.y, width: box.w, height: box.h,
+    rx: 12, ry: 12,
+    fill: box.color, 'fill-opacity': '0.06',
+    stroke: box.color, 'stroke-width': '1.5', opacity: '0.7'
+  });
+  rect.classList.add('folder-box');
+  const lbl = mkEl('text', {
+    x: box.x + 10, y: box.y + 15,
+    fill: box.color, 'font-size': '11', 'font-weight': '700', opacity: '0.8'
+  });
+  lbl.textContent = icon + ' ' + label;
+  lbl.classList.add('folder-label');
+  g.appendChild(rect); g.appendChild(lbl);
+  vp.appendChild(g);
+  folderEls['__special__' + label] = { box: rect, label: lbl };
 }
-function positionTooltip(ev) {
-  tooltip.style.left = (ev.clientX + 14) + 'px';
-  tooltip.style.top = (ev.clientY + 14) + 'px';
-}
-function hideTooltip() { tooltip.style.display = 'none'; }
 
-// pan / zoom
-let viewX = 0, viewY = 0, viewScale = 1;
-function applyViewport(animated) {
-  if (animated) {
-    viewport.classList.add('animate');
-    setTimeout(() => viewport.classList.remove('animate'), 650);
+drawSpecialSection(cssBox, 'CSS / Styles', '🎨');
+drawSpecialSection(envBox, 'Environment',  '🔑');
+drawSpecialSection(dbBox,  'Database',     '🗄️');
+
+// ── 6. Special nodes ──────────────────────────
+function specialNodeColor(nodeType) {
+  if (nodeType === 'css')      return '#c586c0';
+  if (nodeType === 'env')      return '#dcdcaa';
+  if (nodeType === 'database') return '#4ec9b0';
+  return '#888';
+}
+
+function specialNodeIcon(nodeType) {
+  if (nodeType === 'css')      return '🎨';
+  if (nodeType === 'env')      return '🔑';
+  if (nodeType === 'database') return '🗄️';
+  return '📄';
+}
+
+nodes.forEach(n => {
+  if (n.nodeType !== 'css' && n.nodeType !== 'env' && n.nodeType !== 'database') return;
+
+  const col = specialNodeColor(n.nodeType);
+  const nw  = Math.max(SPECIAL_NODE_W, n.fileName.length * 6.5 + 28);
+  const nh  = SPECIAL_NODE_H;
+
+  const g = mkEl('g', {
+    class: 'node special-node',
+    transform: 'translate(' + n.x + ',' + n.y + ')',
+    style: '--nc:' + col
+  });
+
+  const bg = mkEl('rect', {
+    x: 0, y: 0, width: nw, height: nh,
+    rx: 6, ry: 6,
+    fill: col, 'fill-opacity': '0.18',
+    stroke: col, 'stroke-width': '1.5',
+    class: 'core'
+  });
+
+  const icon = mkEl('text', { x: 6, y: 19, 'font-size': '13' });
+  icon.textContent = specialNodeIcon(n.nodeType);
+
+  const txt = mkEl('text', { x: 24, y: 19 });
+  txt.textContent = n.fileName;
+
+  g.appendChild(bg); g.appendChild(icon); g.appendChild(txt);
+  vp.appendChild(g);
+  nodeGroups.push({ el: g, data: n });
+
+  // tooltip for special nodes
+  g.addEventListener('mouseenter', ev => showSpecialTip(ev, n));
+  g.addEventListener('mousemove',  ev => moveTip(ev));
+  g.addEventListener('mouseleave', hideTip);
+
+  g.addEventListener('click', ev => {
+    ev.stopPropagation();
+    if (ev.ctrlKey || ev.metaKey) {
+      vsapi.postMessage({ command: 'openFile', fileId: n.id });
+    } else {
+      selectNode(n.id);
+    }
+  });
+
+  // drag
+  let dragging = false;
+  g.addEventListener('mousedown', ev => { dragging = true; ev.stopPropagation(); });
+  window.addEventListener('mouseup', () => { dragging = false; });
+  window.addEventListener('mousemove', ev => {
+    if (!dragging) return;
+    const r = svg.getBoundingClientRect();
+    n.x = (ev.clientX - r.left  - viewX) / viewScale;
+    n.y = (ev.clientY - r.top   - viewY) / viewScale;
+    g.setAttribute('transform', 'translate(' + n.x + ',' + n.y + ')');
+    refreshEdges(n.id);
+  });
+});
+
+function showSpecialTip(ev, n) {
+  let body = '';
+  if (n.nodeType === 'css') {
+    const classes = (n.cssClasses || []).slice(0, 15).join(', ');
+    body = 'Classes: ' + (n.cssClasses ? n.cssClasses.length : 0) +
+           (classes ? '<br/><span class="fn">' + classes + '</span>' : '') +
+           (n.cssImports && n.cssImports.length ? '<br/>@imports: ' + n.cssImports.join(', ') : '');
+  } else if (n.nodeType === 'env') {
+    const dbk  = (n.envDbKeys  || []).join(', ') || '—';
+    const apik = (n.envApiKeys || []).join(', ') || '—';
+    body = 'Total keys: ' + (n.envKeys ? n.envKeys.length : 0) +
+           '<br/><span style="color:#4ec9b0">DB keys: ' + dbk + '</span>' +
+           '<br/><span style="color:#ce9178">API/Secret keys: ' + apik + '</span>' +
+           '<br/><span class="mt">(values hidden for security)</span>';
+  } else if (n.nodeType === 'database') {
+    const tables = (n.dbTables || []).join(', ') || '—';
+    const models = (n.dbModels || []).join(', ') || '—';
+    body = (n.dbTables && n.dbTables.length ? 'Tables: <span class="fn">' + tables + '</span><br/>' : '') +
+           (n.dbModels && n.dbModels.length ? 'Models: <span class="fn">' + models + '</span>' : '');
   }
-  viewport.setAttribute('transform', 'translate(' + viewX + ',' + viewY + ') scale(' + viewScale + ')');
-  zoomLabel.textContent = Math.round(viewScale * 100) + '%';
+  tip.innerHTML =
+    '<b>' + specialNodeIcon(n.nodeType) + ' ' + n.fileName + '</b>' +
+    '<br/><span class="mt">' + n.nodeType.toUpperCase() + ' &middot; LOC: ' + n.loc + '</span>' +
+    '<br/>' + body +
+    '<br/><span class="hint">Ctrl+Click to open file</span>';
+  tip.style.display = 'block';
+  moveTip(ev);
+}
+`;
 }
 
-viewX = W/2 - 160;
-viewY = 0;
-applyViewport(false);
+function getJs3(): string {
+    return `
+// ═══════════════════════════════════════════════
+// TOOLTIP
+// ═══════════════════════════════════════════════
+function showTip(ev, n) {
+  const fns = (n.functions || []).slice(0, 10).map(f => f.name).join(', ');
+  tip.innerHTML =
+    '<b>' + n.fileName + '</b>' +
+    (entryIds.has(n.id)  ? ' <span style="color:#ffd700">&#9733; entry</span>' : '') +
+    (unusedIds.has(n.id) ? ' <span style="color:#e05555">&#9888; unused</span>' : '') +
+    (n.dbUsage && n.dbUsage.length ? ' <span style="color:#4ec9b0">🗄️ ' + n.dbUsage.join(', ') + '</span>' : '') +
+    '<br/><span class="mt">' + (n.folderPath || '(root)') + '</span><br/>' +
+    'LOC: ' + n.loc +
+    ' &nbsp; Functions: ' + (n.functions ? n.functions.length : 0) +
+    ' &nbsp; Imports: '   + (n.imports   ? n.imports.length   : 0) +
+    (fns ? '<br/><span class="fn">' + fns + '</span>' : '') +
+    '<br/><span class="hint">&#8984;/Ctrl+Click to open file</span>';
+  tip.style.display = 'block';
+  moveTip(ev);
+}
+function moveTip(ev) {
+  tip.style.left = (ev.clientX + 16) + 'px';
+  tip.style.top  = (ev.clientY + 14) + 'px';
+}
+function hideTip() { tip.style.display = 'none'; }
 
-svg.addEventListener('wheel', (ev) => {
+// ═══════════════════════════════════════════════
+// PAN / ZOOM
+// ═══════════════════════════════════════════════
+let viewX = 0, viewY = 0, viewScale = 1;
+
+function applyVP(animated) {
+  if (animated) {
+    vp.classList.add('animate');
+    setTimeout(() => vp.classList.remove('animate'), 600);
+  }
+  vp.setAttribute('transform', 'translate(' + viewX + ',' + viewY + ') scale(' + viewScale + ')');
+  zoomLbl.textContent = Math.round(viewScale * 100) + '%';
+}
+
+const allX = nodes.map(n => n.x), allY = nodes.map(n => n.y);
+if (allX.length) {
+  const minX = Math.min(...allX), maxX = Math.max(...allX) + 120;
+  const minY = Math.min(...allY), maxY = Math.max(...allY) + 30;
+  const scaleX = W / (maxX - minX + 80), scaleY = H / (maxY - minY + 80);
+  viewScale = Math.min(scaleX, scaleY, 1.4);
+  viewX = W / 2 - ((minX + maxX) / 2) * viewScale;
+  viewY = H / 2 - ((minY + maxY) / 2) * viewScale;
+}
+applyVP(false);
+const initVX = viewX, initVY = viewY, initVS = viewScale;
+
+svg.addEventListener('wheel', ev => {
   ev.preventDefault();
-  const rect = svg.getBoundingClientRect();
-  const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
-  const zoomFactor = ev.deltaY < 0 ? 1.12 : 0.89;
-  const newScale = Math.min(5, Math.max(0.1, viewScale * zoomFactor));
-  const worldX = (mx - viewX) / viewScale, worldY = (my - viewY) / viewScale;
-  viewX = mx - worldX * newScale; viewY = my - worldY * newScale;
-  viewScale = newScale;
-  applyViewport(false);
+  const r = svg.getBoundingClientRect();
+  const mx = ev.clientX - r.left, my = ev.clientY - r.top;
+  const zf = ev.deltaY < 0 ? 1.12 : 0.89;
+  const ns = Math.min(6, Math.max(0.08, viewScale * zf));
+  viewX = mx - (mx - viewX) * (ns / viewScale);
+  viewY = my - (my - viewY) * (ns / viewScale);
+  viewScale = ns;
+  applyVP(false);
 }, { passive: false });
 
-let panning = false, panStart = { x:0, y:0 }, viewStart = { x:0, y:0 }, panMoved = false;
-svg.addEventListener('mousedown', (ev) => {
-  if (ev.target === svg) {
+let panning = false, panSX = 0, panSY = 0, vxS = 0, vyS = 0, panMoved = false;
+svg.addEventListener('mousedown', ev => {
+  if (ev.target === svg || ev.target === vp) {
     panning = true; panMoved = false;
-    panStart = { x: ev.clientX, y: ev.clientY };
-    viewStart = { x: viewX, y: viewY };
+    panSX = ev.clientX; panSY = ev.clientY;
+    vxS = viewX; vyS = viewY;
     svg.style.cursor = 'grabbing';
   }
 });
-window.addEventListener('mousemove', (ev) => {
-  if (!panning) { return; }
-  const dx = ev.clientX - panStart.x, dy = ev.clientY - panStart.y;
-  if (Math.abs(dx) > 3 || Math.abs(dy) > 3) { panMoved = true; }
-  viewX = viewStart.x + dx; viewY = viewStart.y + dy;
-  applyViewport(false);
+window.addEventListener('mousemove', ev => {
+  if (!panning) return;
+  const dx = ev.clientX - panSX, dy = ev.clientY - panSY;
+  if (Math.abs(dx) > 3 || Math.abs(dy) > 3) panMoved = true;
+  viewX = vxS + dx; viewY = vyS + dy;
+  applyVP(false);
 });
 window.addEventListener('mouseup', () => { panning = false; svg.style.cursor = 'grab'; });
 
-let activeId = null;
-function selectNode(id) {
-  activeId = (activeId === id) ? null : id;
+// ═══════════════════════════════════════════════
+// HIGHLIGHT STATE + AUTO-RESET TIMER
+// ═══════════════════════════════════════════════
+let activeId     = null;   // selected node id
+let activeFp     = null;   // selected folder path
+let activeEdgeIdx = null;  // selected edge index in edgeEls
+let autoResetTimer = null;
+const AUTO_RESET_MS = 3000; // 3 sec baad auto reset
 
-  if (!activeId) {
-    nodeGroups.forEach(ng => { ng.el.classList.remove('dim'); ng.el.classList.remove('active'); });
-    edgeEls.forEach(ee => {
-      ee.el.classList.remove('dim'); ee.el.classList.remove('active');
-      ee.el.setAttribute('marker-end', 'url(#' + markerId(ee.data.type, null) + ')');
-    });
-    viewX = W/2 - 160; viewY = 0; viewScale = 1;
-    applyViewport(true);
-    return;
-  }
-
-  const connected = new Set([activeId]);
-  edgeEls.forEach(ee => {
-    if (ee.data.source === activeId || ee.data.target === activeId) {
-      connected.add(ee.data.source); connected.add(ee.data.target);
-    }
-  });
-  nodeGroups.forEach(ng => {
-    const isConnected = connected.has(ng.data.id);
-    ng.el.classList.toggle('dim', !isConnected);
-    ng.el.classList.toggle('active', ng.data.id === activeId);
-  });
-  edgeEls.forEach(ee => {
-    const relevant = ee.data.source === activeId || ee.data.target === activeId;
-    ee.el.classList.toggle('dim', !relevant);
-    ee.el.classList.toggle('active', relevant);
-    ee.el.setAttribute('marker-end', 'url(#' + markerId(ee.data.type, relevant ? 'active' : 'dim') + ')');
-  });
-
-  const target = nodeById[activeId];
-  viewScale = 2.2;
-  viewX = W/2 - target.x * viewScale;
-  viewY = H/2 - target.y * viewScale;
-  applyViewport(true);
+function scheduleAutoReset() {
+  clearTimeout(autoResetTimer);
+  autoResetTimer = setTimeout(() => fullReset(true), AUTO_RESET_MS);
 }
 
+function cancelAutoReset() {
+  clearTimeout(autoResetTimer);
+  autoResetTimer = null;
+}
+
+// ── marker helpers ───────────────────────────
+function markerUrl(type, state) {
+  if (type === 'f2f')        return 'url(#arr-f2f'    + (state ? '-' + state : '') + ')';
+  if (type === 'css-import') return 'url(#arr-css)';
+  if (type === 'env-use')    return 'url(#arr-env)';
+  if (type === 'db-use')     return 'url(#arr-db)';
+  const base = type === 'import' ? 'arr-import' : 'arr-call';
+  return 'url(#' + base + (state ? '-' + state : '') + ')';
+}
+
+// ── full reset ───────────────────────────────
+function fullReset(animated) {
+  cancelAutoReset();
+  activeId = null; activeFp = null; activeEdgeIdx = null;
+  nodeGroups.forEach(ng => ng.el.classList.remove('dim', 'active'));
+  edgeEls.forEach(ee => {
+    ee.el.classList.remove('dim', 'active');
+    const t = ee.isF2F ? 'f2f' : ee.data.type;
+    ee.el.setAttribute('marker-end',   markerUrl(t, null));
+    ee.el.setAttribute('marker-start', dotUrl(t, null));
+  });
+  Object.values(folderEls).forEach(fe => {
+    fe.box.classList.remove('dim', 'active');
+    fe.label.classList.remove('dim', 'active');
+  });
+  if (animated) { viewX = initVX; viewY = initVY; viewScale = initVS; applyVP(true); }
+}
+
+function dotUrl(type, state) {
+  const suffix = state === 'act' ? '-act' : state === 'dim' ? '-dim' : '';
+  if (type === 'f2f')        return 'url(#dot-f2f'    + suffix + ')';
+  if (type === 'css-import') return 'url(#dot-css)';
+  if (type === 'env-use')    return 'url(#dot-env)';
+  if (type === 'db-use')     return 'url(#dot-db)';
+  const base = type === 'import' ? 'dot-import' : 'dot-call';
+  return 'url(#' + base + suffix + ')';
+}
+
+// ── apply dim/active to all elements ─────────
+function applyHighlight(keepNodes, keepEdgeIdxs, keepFolders, focusNode) {
+  nodeGroups.forEach(ng => {
+    const keep = keepNodes.has(ng.data.id);
+    ng.el.classList.toggle('dim',    !keep);
+    ng.el.classList.toggle('active', ng.data.id === (focusNode || ''));
+  });
+  edgeEls.forEach((ee, idx) => {
+    const keep = keepEdgeIdxs.has(idx);
+    const state = keep ? 'act' : 'dim';
+    ee.el.classList.toggle('dim',    !keep);
+    ee.el.classList.toggle('active',  keep);
+    const t = ee.isF2F ? 'f2f' : ee.data.type;
+    ee.el.setAttribute('marker-end',   markerUrl(t, keep ? 'act' : 'dim'));
+    ee.el.setAttribute('marker-start', dotUrl(t, state));
+  });
+  Object.keys(folderEls).forEach(fp => {
+    const fe   = folderEls[fp];
+    const keep = keepFolders.has(fp);
+    fe.box.classList.toggle('dim',    !keep);
+    fe.box.classList.toggle('active',  keep);
+    fe.label.classList.toggle('dim',  !keep);
+    fe.label.classList.toggle('active', keep);
+  });
+}
+
+// ── NODE click ───────────────────────────────
+function selectNode(id) {
+  hideTip();
+  if (activeId === id) { fullReset(true); return; }
+  cancelAutoReset();
+  activeId = id; activeFp = null; activeEdgeIdx = null;
+
+  const keepNodes   = new Set([id]);
+  const keepFolders = new Set();
+  const keepEdges   = new Set();
+
+  const n = byId[id];
+  if (n) keepFolders.add(n.folderPath || '(root)');
+
+  edgeEls.forEach((ee, idx) => {
+    if (!ee.isF2F && (ee.data.source === id || ee.data.target === id)) {
+      keepEdges.add(idx);
+      keepNodes.add(ee.data.source);
+      keepNodes.add(ee.data.target);
+    }
+  });
+  keepNodes.forEach(nid => {
+    const nd = byId[nid];
+    if (nd) keepFolders.add(nd.folderPath || '(root)');
+  });
+  // also keep f2f edges between those folders
+  edgeEls.forEach((ee, idx) => {
+    if (ee.isF2F && keepFolders.has(ee.sf) && keepFolders.has(ee.tf)) keepEdges.add(idx);
+  });
+
+  applyHighlight(keepNodes, keepEdges, keepFolders, id);
+  // zoom nahi — sirf isolate, view same rahega
+}
+
+// ── FOLDER click ─────────────────────────────
+function selectFolder(fp) {
+  hideTip();
+  if (activeFp === fp) { fullReset(true); return; }
+  cancelAutoReset();
+  activeId = null; activeFp = fp; activeEdgeIdx = null;
+
+  const keepNodes   = new Set(folderMap[fp].map(n => n.id));
+  const keepFolders = new Set([fp]);
+  const keepEdges   = new Set();
+
+  edgeEls.forEach((ee, idx) => {
+    if (!ee.isF2F) {
+      if (keepNodes.has(ee.data.source) || keepNodes.has(ee.data.target)) {
+        keepEdges.add(idx);
+        keepNodes.add(ee.data.source);
+        keepNodes.add(ee.data.target);
+      }
+    }
+  });
+  keepNodes.forEach(nid => {
+    const nd = byId[nid];
+    if (nd) keepFolders.add(nd.folderPath || '(root)');
+  });
+  edgeEls.forEach((ee, idx) => {
+    if (ee.isF2F && keepFolders.has(ee.sf) && keepFolders.has(ee.tf)) keepEdges.add(idx);
+  });
+
+  applyHighlight(keepNodes, keepEdges, keepFolders, '');
+  // zoom nahi — sirf isolate, view same rahega
+}
+
+// ── EDGE click ───────────────────────────────
+function selectEdge(idx) {
+  hideTip();
+  if (activeEdgeIdx === idx) { fullReset(true); return; }
+  cancelAutoReset();
+  activeId = null; activeFp = null; activeEdgeIdx = idx;
+
+  const ee = edgeEls[idx];
+  const keepNodes   = new Set();
+  const keepFolders = new Set();
+  const keepEdges   = new Set([idx]);
+
+  if (ee.isF2F) {
+    keepFolders.add(ee.sf); keepFolders.add(ee.tf);
+    folderMap[ee.sf].forEach(n => keepNodes.add(n.id));
+    folderMap[ee.tf].forEach(n => keepNodes.add(n.id));
+  } else {
+    keepNodes.add(ee.data.source);
+    keepNodes.add(ee.data.target);
+    const ns = byId[ee.data.source], nt = byId[ee.data.target];
+    if (ns) keepFolders.add(ns.folderPath || '(root)');
+    if (nt) keepFolders.add(nt.folderPath || '(root)');
+  }
+
+  applyHighlight(keepNodes, keepEdges, keepFolders, '');
+  // auto-reset nahi — user khud click karke reset karega
+}
+
+// ── wire up edge click listeners ─────────────
+edgeEls.forEach((ee, idx) => {
+  ee.el.style.cursor = 'pointer';
+  ee.el.addEventListener('click', ev => {
+    ev.stopPropagation();
+    selectEdge(idx);
+  });
+  // edge tooltip on hover
+  ee.el.addEventListener('mouseenter', ev => {
+    const d = ee.data;
+    let html = '';
+    if (ee.isF2F) {
+      html = '<b>' + d.sf + '</b> &rarr; <b>' + d.tf + '</b><br/><span class="mt">folder-to-folder &middot; ' + d.count + ' connection' + (d.count > 1 ? 's' : '') + '</span>';
+    } else {
+      html = '<b>' + (d.s ? d.s.fileName : d.source) + '</b> &rarr; <b>' + (d.t ? d.t.fileName : d.target) + '</b><br/>' +
+             '<span class="mt">' + d.type + (d.importedSymbols && d.importedSymbols.length ? ': ' + d.importedSymbols.slice(0,6).join(', ') : '') + '</span>' +
+             '<br/><span class="hint">Click to isolate this connection</span>';
+    }
+    tip.innerHTML = html;
+    tip.style.display = 'block';
+    moveTip(ev);
+  });
+  ee.el.addEventListener('mousemove', moveTip);
+  ee.el.addEventListener('mouseleave', hideTip);
+});
+
+// ── wire up folder box click listeners ───────
+Object.keys(folderEls).forEach(fp => {
+  const fe = folderEls[fp];
+  fe.box.style.pointerEvents = 'all';
+  fe.box.style.cursor = 'pointer';
+  fe.box.addEventListener('click', ev => {
+    ev.stopPropagation();
+    selectFolder(fp);
+  });
+
+  // double-click = collapse / expand
+  fe.box.addEventListener('dblclick', ev => {
+    ev.stopPropagation();
+    setFolderCollapsed(fp, !collapsedFolders.has(fp));
+  });
+  fe.label.style.pointerEvents = 'all';
+  fe.label.addEventListener('dblclick', ev => {
+    ev.stopPropagation();
+    setFolderCollapsed(fp, !collapsedFolders.has(fp));
+  });
+
+  // folder drag — moves box + all nodes inside it
+  let fDragging = false, fDragStartX = 0, fDragStartY = 0;
+  let fBoxStartX = 0, fBoxStartY = 0;
+  let fNodeStarts = [];
+
+  fe.box.addEventListener('mousedown', ev => {
+    fDragging = true;
+    fDragStartX = ev.clientX; fDragStartY = ev.clientY;
+    fBoxStartX  = fboxes[fp].x; fBoxStartY = fboxes[fp].y;
+    fNodeStarts = (folderMap[fp] || []).map(n => ({ n, x: n.x, y: n.y }));
+    ev.stopPropagation();
+  });
+
+  window.addEventListener('mousemove', ev => {
+    if (!fDragging) return;
+    const dx = (ev.clientX - fDragStartX) / viewScale;
+    const dy = (ev.clientY - fDragStartY) / viewScale;
+
+    const fb = fboxes[fp];
+    fb.x = fBoxStartX + dx; fb.y = fBoxStartY + dy;
+    fe.box.setAttribute('x', fb.x);
+    fe.box.setAttribute('y', fb.y);
+    fe.chevron.setAttribute('x', fb.x + 8);
+    fe.chevron.setAttribute('y', fb.y + 15);
+    fe.label.setAttribute('x', fb.x + 18);
+    fe.label.setAttribute('y', fb.y + 15);
+
+    fNodeStarts.forEach(({ n, x, y }) => {
+      n.x = x + dx; n.y = y + dy;
+      const ng = nodeGroups.find(g => g.data.id === n.id);
+      if (ng) ng.el.setAttribute('transform', 'translate(' + n.x + ',' + n.y + ')');
+    });
+
+    // single pass redraws everything correctly regardless of collapse state
+    redrawAllEdges();
+  });
+
+  window.addEventListener('mouseup', ev => {
+    if (!fDragging) return;
+    fDragging = false;
+    const dx = ev.clientX - fDragStartX, dy = ev.clientY - fDragStartY;
+    if (Math.abs(dx) < 4 && Math.abs(dy) < 4) selectFolder(fp);
+  });
+  // folder label tooltip
+  fe.box.addEventListener('mouseenter', ev => {
+    const ns = folderMap[fp] || [];
+    tip.innerHTML = '<b>' + fp + '</b><br/><span class="mt">' + ns.length + ' file' + (ns.length !== 1 ? 's' : '') + '</span><br/><span class="hint">Click to isolate folder</span>';
+    tip.style.display = 'block';
+    moveTip(ev);
+  });
+  fe.box.addEventListener('mousemove', moveTip);
+  fe.box.addEventListener('mouseleave', hideTip);
+});
+
+// ── click empty = reset ───────────────────────
 svg.addEventListener('click', () => {
   if (panMoved) { panMoved = false; return; }
-  selectNode(null);
+  if (activeId || activeFp || activeEdgeIdx !== null) fullReset(true);
 });
-resetBtn.addEventListener('click', () => selectNode(null));
-</script>
-</body>
-</html>`;
-    }
+resetBtn.addEventListener('click', () => fullReset(true));
+`;
 }
