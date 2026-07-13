@@ -32,41 +32,62 @@ export interface CodeGraph {
 }
 
 /**
- * Tries to resolve a Python "from X import Y" module string (e.g. "model.sql")
- * into an actual file id from the parsed results (e.g. "model/sql.py").
- * Falls back to null if no matching file is found (external / stdlib import).
+ * Python: "model.sql" -> "model/sql.py"
  */
 function resolvePythonModule(moduleName: string, allNodeIds: Set<string>): string | null {
-    if (!moduleName) {
-        return null;
-    }
+    if (!moduleName) return null;
 
-    // "model.sql" -> "model/sql"
     const asPath = moduleName.replace(/\./g, '/');
-
     const candidates = [
         `${asPath}.py`,
         `${asPath}/__init__.py`,
     ];
 
     for (const candidate of candidates) {
-        if (allNodeIds.has(candidate)) {
-            return candidate;
-        }
+        if (allNodeIds.has(candidate)) return candidate;
     }
-
     return null;
 }
 
 /**
- * Builds file-level "import" edges: source file -> target file it imports from.
+ * JS/TS: "./utils" -> "src/utils.ts" (relative imports only, npm packages skip)
  */
+function resolveJsTsModule(moduleName: string, sourceFileId: string, allNodeIds: Set<string>): string | null {
+    // sirf relative imports — npm packages (react, express, etc.) skip
+    if (!moduleName.startsWith('.')) return null;
+
+    const sourceDir = path.dirname(sourceFileId);
+    const resolved = path.join(sourceDir, moduleName).replace(/\\/g, '/');
+
+    const candidates = [
+        `${resolved}.ts`,
+        `${resolved}.tsx`,
+        `${resolved}.js`,
+        `${resolved}.jsx`,
+        `${resolved}/index.ts`,
+        `${resolved}/index.tsx`,
+        `${resolved}/index.js`,
+        `${resolved}/index.jsx`,
+    ];
+
+    for (const candidate of candidates) {
+        if (allNodeIds.has(candidate)) return candidate;
+    }
+    return null;
+}
+
 function buildImportEdges(parsedFiles: FileParseResult[], allNodeIds: Set<string>): GraphEdge[] {
     const edges: GraphEdge[] = [];
 
     for (const file of parsedFiles) {
         for (const imp of file.imports) {
-            const targetId = resolvePythonModule(imp.from, allNodeIds);
+            // pehle Python resolution try karo
+            let targetId = resolvePythonModule(imp.from, allNodeIds);
+
+            // agar Python ne nahi pakda to JS/TS resolution try karo
+            if (!targetId) {
+                targetId = resolveJsTsModule(imp.from, file.id, allNodeIds);
+            }
 
             if (targetId && targetId !== file.id) {
                 edges.push({
@@ -76,38 +97,35 @@ function buildImportEdges(parsedFiles: FileParseResult[], allNodeIds: Set<string
                     importedSymbols: imp.names,
                 });
             }
-            // if targetId is null, it's treated as external and skipped for edges
         }
     }
 
     return edges;
 }
 
-/**
- * Builds cross-file "call" edges: for each function, checks if the names it calls
- * match a symbol imported from another (internal) file. If so, draws a function-level
- * call edge from the calling file/function to the target file/function.
- */
 function buildCallEdges(parsedFiles: FileParseResult[], allNodeIds: Set<string>): GraphEdge[] {
     const edges: GraphEdge[] = [];
 
     for (const file of parsedFiles) {
-        // Map: imported symbol name -> resolved target file id
         const symbolToTarget = new Map<string, string>();
 
         for (const imp of file.imports) {
-            const targetId = resolvePythonModule(imp.from, allNodeIds);
+            // Python resolution
+            let targetId = resolvePythonModule(imp.from, allNodeIds);
+
+            // JS/TS resolution fallback
             if (!targetId) {
-                continue;
+                targetId = resolveJsTsModule(imp.from, file.id, allNodeIds);
             }
+
+            if (!targetId) continue;
+
             for (const name of imp.names) {
                 symbolToTarget.set(name, targetId);
             }
         }
 
-        if (symbolToTarget.size === 0) {
-            continue;
-        }
+        if (symbolToTarget.size === 0) continue;
 
         for (const fn of file.functions) {
             for (const callName of fn.calls) {

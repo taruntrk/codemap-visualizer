@@ -247,14 +247,15 @@ function markerId(type, state) {
 }
 
 function computeEdgeEndpoints(e) {
-  const dx = e.t.x - e.s.x, dy = e.t.y - e.s.y;
+  // swap: target se source ki taraf arrow (data flow direction)
+  const dx = e.s.x - e.t.x, dy = e.s.y - e.t.y;
   const dist = Math.sqrt(dx*dx + dy*dy) || 0.01;
   const ux = dx / dist, uy = dy / dist;
-  const rSource = nodeRadius[e.s.id] + 2;
-  const rTarget = nodeRadius[e.t.id] + 6;
+  const rSource = nodeRadius[e.t.id] + 2;
+  const rTarget = nodeRadius[e.s.id] + 6;
   return {
-    x1: e.s.x + ux * rSource, y1: e.s.y + uy * rSource,
-    x2: e.t.x - ux * rTarget, y2: e.t.y - uy * rTarget,
+    x1: e.t.x + ux * rSource, y1: e.t.y + uy * rSource,
+    x2: e.s.x - ux * rTarget, y2: e.s.y - uy * rTarget,
   };
 }
 
