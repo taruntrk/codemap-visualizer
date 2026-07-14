@@ -1,5 +1,20 @@
 import * as path from 'path';
-import { FileParseResult } from '../parsers/pythonParser';
+
+// ── Unified FileParseResult ───────────────────────────────────────────────────
+// Superset of both jstsParser.FileParseResult and pythonParser.FileParseResult
+// so graphBuilder accepts results from any parser without type errors.
+export interface FileParseResult {
+    id: string;
+    fileName: string;
+    language: string;
+    imports: { from: string; names: string[] }[];
+    functions: { name: string; params: string[]; calls: string[] }[];
+    exports: string[];
+    loc: number;
+    parseError: string | null;
+    apiCalls?:  { url: string; method: string }[];   // JS/TS only
+    apiRoutes?: { url: string; method: string }[];   // Python only
+}
 
 export type NodeType = 'code' | 'css' | 'env' | 'database';
 
@@ -33,10 +48,12 @@ export interface GraphNode {
 export interface GraphEdge {
     source: string;
     target: string;
-    type: 'import' | 'call' | 'css-import' | 'env-use' | 'db-use';
+    type: 'import' | 'call' | 'css-import' | 'env-use' | 'db-use' | 'api-call';
     importedSymbols?: string[];
     sourceFunction?: string;
     targetFunction?: string;
+    apiUrl?: string;      // the matched URL e.g. '/api/users'
+    apiMethod?: string;   // GET | POST | etc.
 }
 
 export interface CodeGraph {
@@ -174,6 +191,70 @@ function buildCallEdges(parsedFiles: FileParseResult[], allNodeIds: Set<string>)
     return edges;
 }
 
+/**
+ * API endpoint matching:
+ * JS/TS files with fetch('/api/x') ↔ Python files with @app.route('/api/x')
+ * Matches on normalised URL. Method must match OR one side is 'ANY'.
+ */
+function buildApiEdges(parsedFiles: FileParseResult[]): GraphEdge[] {
+    const edges: GraphEdge[] = [];
+
+    // Collect all backend route definitions
+    const routeFiles = parsedFiles.filter(
+        f => f.language === 'python' && f.apiRoutes && f.apiRoutes.length > 0
+    );
+    // Collect all frontend API callers
+    const callerFiles = parsedFiles.filter(
+        f => (f.language === 'javascript' || f.language === 'typescript') &&
+             f.apiCalls && f.apiCalls.length > 0
+    );
+
+    if (routeFiles.length === 0 || callerFiles.length === 0) return edges;
+
+    // URL match helper: exact OR prefix match for dynamic routes
+    // e.g. '/api/users' matches '/api/users/{id}'
+    function urlsMatch(callUrl: string, routeUrl: string): boolean {
+        if (callUrl === routeUrl) return true;
+        // strip dynamic segments from route: /api/users/{id} → /api/users
+        const routeBase = routeUrl.replace(/\/[{<][^}/]+[}>]/g, '').replace(/\/$/, '');
+        if (callUrl === routeBase) return true;
+        // Also handle Flask <int:id> style
+        const routeBase2 = routeUrl.replace(/\/<[^>]+>/g, '').replace(/\/$/, '');
+        if (callUrl === routeBase2) return true;
+        return false;
+    }
+
+    function methodsMatch(callMethod: string, routeMethod: string): boolean {
+        if (callMethod === 'ANY' || routeMethod === 'ANY') return true;
+        return callMethod === routeMethod;
+    }
+
+    const seenEdges = new Set<string>();
+
+    for (const caller of callerFiles) {
+        for (const apiCall of (caller.apiCalls || [])) {
+            for (const routeFile of routeFiles) {
+                for (const route of (routeFile.apiRoutes || [])) {
+                    if (urlsMatch(apiCall.url, route.url) && methodsMatch(apiCall.method, route.method)) {
+                        const key = `${caller.id}→${routeFile.id}@${apiCall.url}`;
+                        if (seenEdges.has(key)) continue;
+                        seenEdges.add(key);
+                        edges.push({
+                            source: caller.id,
+                            target: routeFile.id,
+                            type: 'api-call',
+                            apiUrl: apiCall.url,
+                            apiMethod: apiCall.method === 'ANY' ? route.method : apiCall.method,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    return edges;
+}
+
 export function buildGraph(projectName: string, parsedFiles: FileParseResult[]): CodeGraph {
     const nodes: GraphNode[] = parsedFiles.map(file => ({
         id: file.id,
@@ -193,13 +274,14 @@ export function buildGraph(projectName: string, parsedFiles: FileParseResult[]):
     const allNodeIds = new Set(nodes.map(n => n.id));
 
     const importEdges = buildImportEdges(parsedFiles, allNodeIds);
-    const callEdges = buildCallEdges(parsedFiles, allNodeIds);
+    const callEdges   = buildCallEdges(parsedFiles, allNodeIds);
+    const apiEdges    = buildApiEdges(parsedFiles);
 
     return {
         projectName,
         generatedAt: new Date().toISOString(),
         nodes,
-        edges: [...importEdges, ...callEdges],
+        edges: [...importEdges, ...callEdges, ...apiEdges],
     };
 }
 

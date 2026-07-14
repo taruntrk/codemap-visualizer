@@ -5,7 +5,7 @@ import { parseJsTsFile } from './parsers/jstsParser';
 import { parseCssFile } from './parsers/cssParser';
 import { parseEnvFile } from './parsers/envParser';
 import { parseDbFile } from './parsers/dbParser';
-import { buildGraph, buildGraphWithSpecial } from './scanner/graphBuilder';
+import { buildGraph, buildGraphWithSpecial, FileParseResult } from './scanner/graphBuilder';
 import { CodeMapPanel } from './webview/panel';
 
 export function activate(context: vscode.ExtensionContext) {
@@ -43,7 +43,7 @@ export function activate(context: vscode.ExtensionContext) {
         );
 
         // ── Parse code files ─────────────────────────────────
-        const codeResults = [];
+        const codeResults: FileParseResult[] = [];
 
         for (const f of pythonFiles) {
             codeResults.push(await parsePythonFile(f, rootPath, extensionPath));

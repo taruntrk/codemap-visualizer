@@ -34,6 +34,11 @@ export interface FunctionInfo {
     calls: string[];
 }
 
+export interface ApiCallInfo {
+    url: string;       // e.g. '/api/users'
+    method: string;    // 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'ANY'
+}
+
 export interface FileParseResult {
     id: string;
     fileName: string;
@@ -41,6 +46,7 @@ export interface FileParseResult {
     imports: ImportInfo[];
     functions: FunctionInfo[];
     exports: string[];
+    apiCalls: ApiCallInfo[];   // fetch/axios calls extracted
     loc: number;
     parseError: string | null;
 }
@@ -67,6 +73,92 @@ export async function parseJsTsFile(
         const imports: ImportInfo[] = [];
         const functions: FunctionInfo[] = [];
         const exportsArr: string[] = [];
+        const apiCalls: ApiCallInfo[] = [];
+
+        // ── helpers for API call extraction ──────────────
+        // Normalise a URL string: strip quotes, trailing slash, lowercase
+        function normaliseUrl(raw: string): string {
+            return raw.replace(/['"` ]/g, '').replace(/\/$/, '').toLowerCase();
+        }
+
+        // Try to extract a string literal from a node (handles template literals too)
+        function extractStringArg(node: any): string | null {
+            if (!node) return null;
+            if (node.type === 'string' || node.type === 'string_literal') {
+                return node.text.replace(/['"]/g, '');
+            }
+            if (node.type === 'template_string') {
+                // grab the static prefix before the first ${}
+                const raw = node.text.replace(/`/g, '');
+                return raw.split('${')[0];
+            }
+            return null;
+        }
+
+        // Detect HTTP method from a call like axios.get / axios.post / api.get etc.
+        function methodFromName(name: string): string {
+            const n = name.toLowerCase();
+            if (n === 'get')    return 'GET';
+            if (n === 'post')   return 'POST';
+            if (n === 'put')    return 'PUT';
+            if (n === 'delete' || n === 'del') return 'DELETE';
+            if (n === 'patch')  return 'PATCH';
+            return 'ANY';
+        }
+
+        function extractApiCall(node: any) {
+            if (node.type !== 'call_expression') return;
+            const funcNode = node.childForFieldName('function');
+            const argsNode = node.childForFieldName('arguments');
+            if (!funcNode || !argsNode) return;
+
+            // args[0] is the URL argument
+            const argChildren = (argsNode.children || []).filter(
+                (c: any) => c.type !== ',' && c.type !== '(' && c.type !== ')'
+            );
+            const firstArg = argChildren[0];
+            if (!firstArg) return;
+
+            // Case 1: fetch('/api/...') or fetch(url, { method: 'POST' })
+            if (funcNode.type === 'identifier' && funcNode.text === 'fetch') {
+                const url = extractStringArg(firstArg);
+                if (url && (url.startsWith('/') || url.includes('/api/'))) {
+                    // Try to detect method from second arg: { method: 'POST' }
+                    let method = 'GET';
+                    const secondArg = argChildren[1];
+                    if (secondArg && secondArg.type === 'object') {
+                        for (const prop of secondArg.children || []) {
+                            if (prop.type === 'pair') {
+                                const key = prop.childForFieldName('key');
+                                const val = prop.childForFieldName('value');
+                                if (key && key.text.replace(/['"]/g,'') === 'method' && val) {
+                                    method = val.text.replace(/['"]/g,'').toUpperCase() || 'GET';
+                                }
+                            }
+                        }
+                    }
+                    apiCalls.push({ url: normaliseUrl(url), method });
+                }
+                return;
+            }
+
+            // Case 2: axios.get('/api/...') / axios.post(...) / api.get(...) / http.get(...)
+            if (funcNode.type === 'member_expression') {
+                const obj  = funcNode.childForFieldName('object');
+                const prop = funcNode.childForFieldName('property');
+                if (!obj || !prop) return;
+                const objName  = obj.text.toLowerCase();
+                const propName = prop.text.toLowerCase();
+                const isHttpClient = ['axios','api','http','client','request','instance','$http','$axios'].includes(objName);
+                const isHttpMethod = ['get','post','put','delete','del','patch','request'].includes(propName);
+                if (isHttpClient && isHttpMethod) {
+                    const url = extractStringArg(firstArg);
+                    if (url && (url.startsWith('/') || url.includes('/api/'))) {
+                        apiCalls.push({ url: normaliseUrl(url), method: methodFromName(propName) });
+                    }
+                }
+            }
+        }
 
         function walk(node: any) {
             // import statements: import { x } from 'y'  /  import x from 'y'
@@ -120,6 +212,8 @@ export async function parseJsTsFile(
                         }
                     }
                 }
+                // API call detection (fetch / axios / api.get etc.)
+                extractApiCall(node);
             }
 
             // function declarations: function foo() {}
@@ -236,6 +330,7 @@ export async function parseJsTsFile(
             imports,
             functions,
             exports: exportsArr,
+            apiCalls,
             loc,
             parseError: null,
         };
@@ -247,6 +342,7 @@ export async function parseJsTsFile(
             imports: [],
             functions: [],
             exports: [],
+            apiCalls: [],
             loc: 0,
             parseError: e?.message ? String(e.message) : String(e),
         };

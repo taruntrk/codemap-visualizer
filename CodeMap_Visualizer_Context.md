@@ -1,6 +1,6 @@
 # CodeMap Visualizer — Project Context (Updated)
 
-> Ye file original context doc ka updated version hai — jo bhi kaam pichli session mein hua (bug fix, Phase 2, Phase 3 webview) sab yahan add kar diya gaya hai. Purana content upar hi hai, naya sab neeche **"UPDATE LOG"** section mein hai.
+> Ye file project ka living context document hai — har session ke baad update hota hai. Sabse latest changes sabse neeche "UPDATE LOG" mein milenge.
 
 ## 🎯 Goal (unchanged)
 Ek **VS Code extension** banani hai jo kisi bhi project folder ko scan karke uska **visual map** banaye — files, imports, function-level connections, aur (future mein) frontend↔backend API call connections, aur AI-based summaries.
@@ -519,3 +519,147 @@ B (data provider) ——→ A (data receiver / importer)
 5. **AI enrichment layer** — Claude API se har node ka `summary`/`category` fill karna
 6. **Frontend↔Backend API call matching** — `fetch('/api/x')` ↔ `@app.post("/api/x")`
 7. **Visualization polish** — dense graphs mein overlapping nodes fix, better layout
+
+---
+
+## 🐛 UPDATE LOG (continued) — v8: Nested folder boxes + layout overhaul
+
+### 1️⃣3️⃣ Phase 3 v8 — Proper nested folder box layout (current active version)
+
+**What changed (3 separate iterations in this session):**
+
+#### Iteration A — Nested folder boxes (recursive draw)
+
+Pehle saari folders flat boxes thi (sab siblings). Ab:
+- `drawFolderBox(fp)` recursive function — child folders **inside** parent box render hoti hain
+- `folderChildren(fp)` se direct children milte hain, recursively draw hote hain
+- Depth-based styling:
+  - Top-level box: solid border (`stroke-width: 1.5`), `fill-opacity: 0.07`, rounded corners `rx:10`
+  - Child box: dashed border (`stroke-dasharray: 4,3`), `fill-opacity: 0.05`, tighter corners `rx:7`
+- **Chevron** `▼`/`▶` added har box ke label ke peeche — collapse state indicate karta hai
+- **Folder label** ab sirf last path segment dikhata hai (`src/components` → `components`)
+- `folderEls[fp]` mein ab `chevron` field bhi store hoti hai
+
+#### Iteration B — Horizontal child layout + size fix
+
+**Problem:** Children vertically stack ho rahe the (ek ke neeche ek), parent box mein zyada empty space tha.
+
+**Fix:**
+- `computeFboxSize()` bottom-up: children ki total width = sum of child widths + gaps
+- `positionFbox()` top-down: children **horizontally side-by-side** place hote hain, files below
+- Parent box width = `max(children_row_width, files_width) + FPAD*2`
+- Parent box height = `LABEL_H + FPAD + children_height + CHILD_PAD + files_height + FPAD`
+- Files mein 2-column layout added (6+ files hone par)
+- Height recalculation after positioning to prevent overflow
+
+#### Iteration C — Root cause fix: two-pass layout + ROOT_FP
+
+**Root causes:**
+1. `'(root)'` naam — project ka actual naam nahi tha
+2. Items box se bahar — grid pre-computed heights use karta tha, actual post-positioning heights nahi
+3. `topFolders` logic galat — `src`, `model` etc. alag top-level boxes the instead of nested
+
+**Fixes (final, current version):**
+
+**`ROOT_FP = graph.projectName`** — empty `folderPath` wale nodes ab `ROOT_FP` se normalise hote hain. `n.folderPath` in-place set hota hai taaki edge anchoring, collapse, aur tooltips sab consistent rahein.
+
+**`topFolders` logic:**
+```
+rootHasFiles = (folderMap[ROOT_FP] || []).length > 0
+
+if rootHasFiles:
+    topFolders = [ROOT_FP]          ← one big project box, subfolders nest inside
+else:
+    topFolders = direct children of ROOT_FP   ← skip empty root wrapper
+```
+
+**Two-pass layout (proper bottom-up → top-down):**
+```
+Pass 1 — computeFboxSize(fp, depth):
+  → children recurse first
+  → childRowW = sum of child widths + gaps
+  → filesH = files * (nodeH + NODE_GAP_Y)
+  → bw = max(childRowW, filesW) + FPAD*2
+  → bh = LABEL_H + FPAD + max(childRowH + filesH) + FPAD
+  → stored in fboxes[fp]
+
+Pass 2 — positionFbox(fp, startX, startY) → returns actual bottom Y:
+  → places child boxes horizontally (positionFbox recursively)
+  → childBottom = max of all children's returned bottom Y
+  → places files below childBottom
+  → fb.h = actual contentBottom + FPAD - startY   ← REAL height, not estimate
+  → fb.origH = fb.h
+  → returns startY + fb.h   ← parent uses this to know true bottom
+
+Grid layout:
+  → first run positionFbox at dummy origin to learn real sizes
+  → build colW[], rowH[] from actual fboxes[fp].h
+  → second run positionFbox at correct grid coords
+```
+
+**Why this fixes the overflow:** Previously `computeFboxSize` guessed a height, grid used that guess, `positionFbox` updated height locally but grid coords were already set wrong. Now grid coords come from measured reality.
+
+**Constants used:**
+```
+FPAD=16, FGAP_X=60, FGAP_Y=50
+NODE_GAP_Y=8, NODE_GAP_X=14, CHILD_PAD=14, LABEL_H=24
+```
+
+---
+
+## 📁 Current File Structure (v8, updated)
+
+```
+codemap-visualizer/
+├── src/
+│   ├── extension.ts              ← unchanged
+│   ├── scanner/
+│   │   ├── scanner.ts            ← unchanged
+│   │   └── graphBuilder.ts       ← JS/TS resolution added (session before this)
+│   ├── parsers/
+│   │   ├── pythonParser.ts       ← unchanged since bug-fix
+│   │   ├── jstsParser.ts         ← JS/TS/JSX/TSX parser
+│   │   ├── cssParser.ts          ← CSS/SCSS/LESS parser
+│   │   ├── envParser.ts          ← .env parser
+│   │   └── dbParser.ts           ← SQL/Prisma/ORM parser
+│   └── webview/
+│       └── panel.ts              ← v8: nested folder boxes, two-pass layout, ROOT_FP
+├── grammars/
+│   ├── web-tree-sitter.wasm
+│   ├── tree-sitter-python.wasm
+│   ├── tree-sitter-javascript.wasm
+│   └── tree-sitter-typescript.wasm
+├── package.json
+└── esbuild.js
+```
+
+---
+
+## ✅ Milestones achieved (full list, current)
+
+1. ✅ "Hello World" command
+2. ✅ Phase 1 basic scanning
+3. ✅ Tree-sitter Python parsing bug fixed
+4. ✅ Phase 2 — JSON graph builder (import + call edges)
+5. ✅ Phase 3 v1 — basic interactive webview
+6. ✅ Phase 3 v2 — pan/zoom, glow/lighting
+7. ✅ Phase 3 v3 — directional arrowheads
+8. ✅ Phase 3 v4/v5 — folder clustering + drill-down (superseded)
+9. ✅ Phase 3 v6 — horizontal execution-flow layout (entry-point detection)
+10. ✅ Phase 3 v7 — folder-grouping bands inside horizontal flow
+11. ✅ Ctrl+Click to open file in VS Code
+12. ✅ JS/TS/JSX/TSX parsing (`jstsParser.ts`)
+13. ✅ JS/TS relative import resolution in `graphBuilder.ts`
+14. ✅ Arrow direction fixed
+15. ✅ CSS / ENV / DB file support with dedicated sections + colored edges
+16. ✅ Entry point detection (gold border), unused file detection (red)
+17. ✅ Rich tooltips for nodes, edges, folders, CSS/ENV/DB nodes
+18. ✅ **Phase 3 v8 — Nested folder boxes, two-pass layout, ROOT_FP normalisation** ← CURRENT
+
+---
+
+## 🔮 Next steps
+
+1. **Visualization polish** — test on real projects, fix any remaining layout edge cases
+2. **AI enrichment layer** — Claude API se har node ka `summary`/`category` fill karna
+3. **Frontend↔Backend API call matching** — `fetch('/api/x')` ↔ `@app.post("/api/x")`
