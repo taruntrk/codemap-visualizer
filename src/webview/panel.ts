@@ -756,9 +756,8 @@ function recomputeFboxHeight(fp) {
   const isCollapsed = collapsedFolders.has(fp);
   if (isCollapsed) {
     fb.h = COLLAPSED_H;
-    fe.box.setAttribute('height', COLLAPSED_H);
-    fe.box.setAttribute('width', fb.w);
     if (fe.chevron) fe.chevron.textContent = '▶ ';
+    updateFolderElPositions(fp);
     return;
   }
 
@@ -775,15 +774,11 @@ function recomputeFboxHeight(fp) {
   if (children.length > 0) {
     let curX = contentX;
     children.forEach((c, i) => {
-      const cfb = fboxes[c], cfe = folderEls[c];
+      const cfb = fboxes[c];
       if (!cfb) return;
       // move child box to its new horizontal position
       cfb.x = curX; cfb.y = curY;
-      if (cfe) {
-        if (cfe.box)    { cfe.box.setAttribute('x', curX); cfe.box.setAttribute('y', curY); }
-        if (cfe.chevron){ cfe.chevron.setAttribute('x', curX+6); cfe.chevron.setAttribute('y', curY+14); }
-        if (cfe.label)  { cfe.label.setAttribute('x', curX+18); cfe.label.setAttribute('y', curY+14); }
-      }
+      updateFolderElPositions(c);
       actualChildRowW += cfb.w + (i > 0 ? NODE_GAP_X : 0);
       curX += cfb.w + NODE_GAP_X;
       childBottom = Math.max(childBottom, curY + cfb.h);
@@ -814,8 +809,8 @@ function recomputeFboxHeight(fp) {
   const newInnerW = Math.max(actualChildRowW, maxFileW, 60);
   fb.w = newInnerW + FPAD * 2;
 
-  fe.box.setAttribute('height', fb.h);
-  fe.box.setAttribute('width',  fb.w);
+  // Update all SVG elements (box rect, chevron, label, grip)
+  updateFolderElPositions(fp);
 
   // Update hint text position (bottom-left)
   // Update label (badge count stays same — no recount needed here)
@@ -828,6 +823,233 @@ function getAllDescendantFolders(fp) {
   }
   collect(fp);
   return result;
+}
+
+// ── updateFolderElPositions: one place to sync all SVG elements of a folder ──
+// Call this whenever fboxes[fp].x/y/w/h changes for any reason.
+const _GS = 18; // corner size (matches CORNER in drawFolderBox)
+const _EW = 8;  // edge strip thickness
+function updateFolderElPositions(fp) {
+  const fb = fboxes[fp], fe = folderEls[fp];
+  if (!fb || !fe) return;
+  if (fe.box)    { fe.box.setAttribute('x', fb.x);    fe.box.setAttribute('y', fb.y);
+                   fe.box.setAttribute('width', fb.w); fe.box.setAttribute('height', fb.h); }
+  if (fe.chevron){ fe.chevron.setAttribute('x', fb.x + 6);  fe.chevron.setAttribute('y', fb.y + 14); }
+  if (fe.label)  { fe.label.setAttribute('x', fb.x + 18); fe.label.setAttribute('y', fb.y + 14); }
+  // bottom edge strip
+  if (fe.edgeB)  { fe.edgeB.setAttribute('x', fb.x); fe.edgeB.setAttribute('y', fb.y + fb.h - _EW);
+                   fe.edgeB.setAttribute('width', fb.w - _GS); fe.edgeB.setAttribute('height', _EW); }
+  // right edge strip
+  if (fe.edgeR)  { fe.edgeR.setAttribute('x', fb.x + fb.w - _EW); fe.edgeR.setAttribute('y', fb.y);
+                   fe.edgeR.setAttribute('width', _EW); fe.edgeR.setAttribute('height', fb.h - _GS); }
+  // corner square
+  if (fe.edgeC)  { fe.edgeC.setAttribute('x', fb.x + fb.w - _GS); fe.edgeC.setAttribute('y', fb.y + fb.h - _GS); }
+  if (fe.edgeCDot){ fe.edgeCDot.setAttribute('x', fb.x + fb.w - _GS/2); fe.edgeCDot.setAttribute('y', fb.y + fb.h - _GS/2 + 3); }
+  // cross-folder badge (top-right)
+  if (fe.badgeBg || fe.badgeTxt) {
+    const bw = fe.badgeBg ? parseFloat(fe.badgeBg.getAttribute('width') || '16') : 16;
+    const bx = fb.x + fb.w - bw - 6;
+    const by = fb.y + 4;
+    if (fe.badgeBg) { fe.badgeBg.setAttribute('x', bx); fe.badgeBg.setAttribute('y', by); }
+    if (fe.badgeTxt){ fe.badgeTxt.setAttribute('x', bx + bw/2); fe.badgeTxt.setAttribute('y', by + 10); }
+  }
+  // hint text (bottom-left, top-level folders only)
+  if (fe.hintEl) { fe.hintEl.setAttribute('x', fb.x + 6); fe.hintEl.setAttribute('y', fb.y + fb.h - 6); }
+  // legacy grip support (if any old folderEls still have grip)
+  if (fe.grip)   { fe.grip.setAttribute('x', fb.x + fb.w - _GS); fe.grip.setAttribute('y', fb.y + fb.h - _GS); }
+  if (fe.gripDot){ fe.gripDot.setAttribute('x', fb.x + fb.w - _GS/2); fe.gripDot.setAttribute('y', fb.y + fb.h - _GS/2 + 3); }
+  if (fe.gripHit){ fe.gripHit.setAttribute('x', fb.x + fb.w - 28); fe.gripHit.setAttribute('y', fb.y + fb.h - 28); }
+}
+
+// ── repositionContentInFolder: when folder is resized, proportionally move
+//    direct file nodes AND child subfolders. Node SIZE stays fixed; positions scale.
+function repositionContentInFolder(fp, prevW, prevH, newW, newH) {
+  const fb = fboxes[fp];
+  if (!fb) return;
+
+  const ox = fb.x + FPAD;
+  const oy = fb.y + LABEL_H + FPAD;
+  const oldCW = Math.max(1, prevW - FPAD * 2);
+  const oldCH = Math.max(1, prevH - LABEL_H - FPAD * 2);
+  const newCW = Math.max(1, newW  - FPAD * 2);
+  const newCH = Math.max(1, newH  - LABEL_H - FPAD * 2);
+  const sx = newCW / oldCW;
+  const sy = newCH / oldCH;
+
+  // Helper: move a subtree (folder + all descendants + their files) by dx,dy
+  function shiftSubtree(cfp, dx, dy) {
+    [cfp, ...getAllDescendantFolders(cfp)].forEach(f => {
+      const fxb = fboxes[f];
+      if (!fxb) return;
+      fxb.x += dx; fxb.y += dy;
+      updateFolderElPositions(f);
+      (folderMap[f] || []).forEach(n => {
+        n.x += dx; n.y += dy;
+        const ng = nodeGroups.find(g2 => g2.data.id === n.id);
+        if (ng) ng.el.setAttribute('transform', 'translate('+n.x+','+n.y+')');
+      });
+    });
+  }
+
+  // Reposition direct file nodes proportionally
+  (folderMap[fp] || []).forEach(n => {
+    const relX = n.x - ox;
+    const relY = n.y - oy;
+    n.x = ox + relX * sx;
+    n.y = oy + relY * sy;
+    // clamp inside new content area
+    n.x = Math.max(ox, Math.min(ox + newCW - nodeW(n), n.x));
+    n.y = Math.max(oy, Math.min(oy + newCH - nodeH(), n.y));
+    const ng = nodeGroups.find(g2 => g2.data.id === n.id);
+    if (ng) ng.el.setAttribute('transform', 'translate('+n.x+','+n.y+')');
+  });
+
+  // Reposition child subfolders proportionally (scale top-left corner, keep size)
+  folderChildren(fp).forEach(c => {
+    const cfb = fboxes[c];
+    if (!cfb) return;
+    const relX = cfb.x - ox;
+    const relY = cfb.y - oy;
+    const targetX = ox + relX * sx;
+    const targetY = oy + relY * sy;
+    // clamp inside new content area
+    const clampX = Math.max(ox, Math.min(ox + newCW - cfb.w, targetX));
+    const clampY = Math.max(oy, Math.min(oy + newCH - cfb.h, targetY));
+    const dx = clampX - cfb.x;
+    const dy = clampY - cfb.y;
+    if (dx !== 0 || dy !== 0) shiftSubtree(c, dx, dy);
+  });
+}
+
+// ── resolveOverlaps: multi-pass magnetic repulsion for all nodes in a folder ──
+// Keeps running passes until no two nodes overlap (or max passes reached).
+// Dragged node is pinned — everything else moves away from it and each other.
+function resolveOverlaps(fp) {
+  const ns = folderMap[fp];
+  if (!ns || ns.length < 2) return;
+  const fb = fboxes[fp];
+  const GAP = 4;   // minimum gap between nodes
+  const MAX_PASSES = 20;
+
+  for (let pass = 0; pass < MAX_PASSES; pass++) {
+    let anyOverlap = false;
+
+    for (let i = 0; i < ns.length; i++) {
+      for (let j = i + 1; j < ns.length; j++) {
+        const a = ns[i], b = ns[j];
+        const aw = nodeW(a), ah = nodeH();
+        const bw = nodeW(b), bh = nodeH();
+
+        const overlapX = a.x < b.x + bw + GAP && a.x + aw + GAP > b.x;
+        const overlapY = a.y < b.y + bh + GAP && a.y + ah + GAP > b.y;
+        if (!overlapX || !overlapY) continue;
+
+        anyOverlap = true;
+
+        // Penetration depths on each axis
+        const penR = (a.x + aw + GAP) - b.x;   // push b right / a left
+        const penL = (b.x + bw + GAP) - a.x;   // push b left  / a right
+        const penD = (a.y + ah + GAP) - b.y;   // push b down  / a up
+        const penU = (b.y + bh + GAP) - a.y;   // push b up    / a down
+        const minPen = Math.min(penR, penL, penD, penU);
+
+        // Split the push 50/50 between the two nodes
+        let adx = 0, ady = 0, bdx = 0, bdy = 0;
+        if (minPen === penR) { adx = -penR/2; bdx =  penR/2; }
+        else if (minPen === penL) { adx =  penL/2; bdx = -penL/2; }
+        else if (minPen === penD) { ady = -penD/2; bdy =  penD/2; }
+        else                      { ady =  penU/2; bdy = -penU/2; }
+
+        // Apply and clamp inside folder box
+        if (fb) {
+          const minX = fb.x + FPAD, minY = fb.y + LABEL_H + FPAD;
+          a.x = Math.max(minX, Math.min(fb.x + fb.w - FPAD - aw, a.x + adx));
+          a.y = Math.max(minY, Math.min(fb.y + fb.h - FPAD - ah, a.y + ady));
+          b.x = Math.max(minX, Math.min(fb.x + fb.w - FPAD - bw, b.x + bdx));
+          b.y = Math.max(minY, Math.min(fb.y + fb.h - FPAD - bh, b.y + bdy));
+        } else {
+          a.x += adx; a.y += ady;
+          b.x += bdx; b.y += bdy;
+        }
+      }
+    }
+
+    if (!anyOverlap) break;
+  }
+
+  // Flush all SVG positions after all passes
+  ns.forEach(n => {
+    const ng = nodeGroups.find(g2 => g2.data.id === n.id);
+    if (ng) {
+      ng.el.setAttribute('transform', 'translate('+n.x+','+n.y+')');
+      refreshEdges(n.id);
+    }
+  });
+}
+
+// ── resizeParentBox: tightly re-wrap a folder around its current children + files ──
+// After a child subfolder is dragged, call this on the parent (and it recurses upward).
+function resizeParentBox(fp) {
+  if (!fp || fp === ROOT_FP) return;
+  const fb = fboxes[fp], fe = folderEls[fp];
+  if (!fb || !fe) return;
+
+  const children    = folderChildren(fp);
+  const directFiles = sortFolderNodes(folderMap[fp] || []);
+
+  // Measure the bounding box of all children subfolder boxes
+  let childMaxRight  = fb.x + FPAD;
+  let childMaxBottom = fb.y + LABEL_H + FPAD;
+  children.forEach(c => {
+    const cfb = fboxes[c];
+    if (!cfb) return;
+    childMaxRight  = Math.max(childMaxRight,  cfb.x + cfb.w);
+    childMaxBottom = Math.max(childMaxBottom, cfb.y + cfb.h);
+  });
+
+  // Measure the bounding box of direct file nodes
+  let fileMaxRight  = fb.x + FPAD;
+  let fileMaxBottom = children.length > 0 ? childMaxBottom : fb.y + LABEL_H + FPAD;
+  directFiles.forEach(n => {
+    fileMaxRight  = Math.max(fileMaxRight,  n.x + nodeW(n));
+    fileMaxBottom = Math.max(fileMaxBottom, n.y + nodeH());
+  });
+
+  const contentRight  = Math.max(childMaxRight,  fileMaxRight);
+  const contentBottom = Math.max(childMaxBottom, fileMaxBottom);
+
+  // New width and height: content + padding on all sides
+  const newW = Math.max(contentRight  - fb.x + FPAD, 60 + FPAD * 2);
+  const newH = Math.max(contentBottom - fb.y + FPAD, LABEL_H + FPAD * 2);
+
+  fb.w = newW;
+  fb.h = newH;
+
+  // Update all SVG elements for this folder (box, chevron, label, grip)
+  updateFolderElPositions(fp);
+
+  // Recurse upward so grandparent also wraps correctly
+  resizeParentBox(folderParent(fp));
+}
+
+// ── redrawAllEdgesLive: update all edges (file-level + f2f) during drag ──
+function redrawAllEdgesLive() {
+  edgeEls.forEach(ee => {
+    if (ee.isF2F) {
+      // Folder-to-folder edge: recompute from current fbox centers
+      const fbS = fboxes[ee.sf], fbT = fboxes[ee.tf];
+      if (!fbS || !fbT) return;
+      const x1 = fbS.x + fbS.w / 2, y1 = fbS.y + fbS.h / 2;
+      const x2 = fbT.x + fbT.w / 2, y2 = fbT.y + fbT.h / 2;
+      ee.el.setAttribute('d', bezierPath(x1, y1, x2, y2));
+    } else {
+      // File-level edge: recompute from current node positions
+      const e = ee.data;
+      if (!e.s || !e.t) return;
+      const a1 = edgeAnchor(e.s, 'right'), a2 = edgeAnchor(e.t, 'left');
+      ee.el.setAttribute('d', bezierPath(a1.x, a1.y, a2.x, a2.y));
+    }
+  });
 }
 
 // ── render ROOT view ──────────────────────────────────
@@ -886,42 +1108,119 @@ function renderRoot() {
     let crossCount = 0;
     edges.forEach(e => {
       const sIn = myIds.has(e.source), tIn = myIds.has(e.target);
-      if (sIn !== tIn) crossCount++;  // exactly one endpoint inside = cross-folder
+      if (sIn !== tIn) crossCount++;
     });
+    let badgeEl = null;   // the <g> holding bgR + btxt
+    let badgeBg = null;   // the <rect> inside badge
+    let badgeTxt = null;  // the <text> inside badge
     if (crossCount > 0) {
-      const badge = mkEl('g', {});
       const bw = crossCount > 99 ? 30 : crossCount > 9 ? 22 : 16;
       const bx = fb.x + fb.w - bw - 6;
       const by = fb.y + 4;
-      const bgR = mkEl('rect', {
+      badgeEl  = mkEl('g', {});
+      badgeBg  = mkEl('rect', {
         x: bx, y: by, width: bw, height: 14,
         rx: 7, ry: 7,
         fill: fb.color, 'fill-opacity': '0.35',
         stroke: fb.color, 'stroke-width': '0.8'
       });
-      const btxt = mkEl('text', {
+      badgeTxt = mkEl('text', {
         x: bx + bw/2, y: by + 10,
         'text-anchor': 'middle',
         fill: '#fff', 'font-size': '8', 'font-weight': '700', opacity: '0.9'
       });
-      btxt.textContent = crossCount > 99 ? '99+' : String(crossCount);
-      badge.appendChild(bgR);
-      badge.appendChild(btxt);
-      g.appendChild(badge);
+      badgeTxt.textContent = crossCount > 99 ? '99+' : String(crossCount);
+      badgeEl.appendChild(badgeBg);
+      badgeEl.appendChild(badgeTxt);
+      g.appendChild(badgeEl);
     }
 
+    let hintEl = null;
     if (isTop) {
-      const hint = mkEl('text', {
+      hintEl = mkEl('text', {
         x: fb.x + 6, y: fb.y + fb.h - 6,
         fill: fb.color, 'font-size': '8', opacity: '0.35'
       });
-      hint.textContent = 'dbl-click to explore';
-      g.appendChild(hint);
+      hintEl.textContent = 'dbl-click to explore';
+      g.appendChild(hintEl);
     }
+
+    // ── resize zones: bottom edge, right edge, bottom-right corner ──
+    const EDGE_W = 8;    // thickness of edge hit strips
+    const CORNER = 18;   // corner square size (also the visible indicator)
+
+    // Bottom edge strip (full width minus corner)
+    const edgeB = mkEl('rect', {
+      x: fb.x, y: fb.y + fb.h - EDGE_W,
+      width: fb.w - CORNER, height: EDGE_W,
+      fill: 'transparent', style: 'cursor:s-resize',
+      class: 'folder-resize-b'
+    });
+    // Right edge strip (full height minus corner)
+    const edgeR = mkEl('rect', {
+      x: fb.x + fb.w - EDGE_W, y: fb.y,
+      width: EDGE_W, height: fb.h - CORNER,
+      fill: 'transparent', style: 'cursor:e-resize',
+      class: 'folder-resize-r'
+    });
+    // Bottom-right corner (visible indicator + drag both axes)
+    const edgeC = mkEl('rect', {
+      x: fb.x + fb.w - CORNER, y: fb.y + fb.h - CORNER,
+      width: CORNER, height: CORNER,
+      rx: 3, ry: 3,
+      fill: fb.color, 'fill-opacity': '0.28',
+      stroke: fb.color, 'stroke-width': '0.8',
+      style: 'cursor:se-resize',
+      class: 'folder-resize-c'
+    });
+    const edgeCDot = mkEl('text', {
+      x: fb.x + fb.w - CORNER/2, y: fb.y + fb.h - CORNER/2 + 3,
+      'text-anchor': 'middle', 'font-size': '9',
+      fill: fb.color, opacity: '0.8',
+      style: 'pointer-events:none; user-select:none'
+    });
+    edgeCDot.textContent = '⤡';
+
+    g.appendChild(edgeB); g.appendChild(edgeR);
+    g.appendChild(edgeC); g.appendChild(edgeCDot);
 
     g.appendChild(rect); g.appendChild(chevron); g.appendChild(lbl);
     vp.appendChild(g);
-    folderEls[fp] = { box: rect, label: lbl, chevron, g };
+    folderEls[fp] = { box: rect, label: lbl, chevron, g, edgeB, edgeR, edgeC, edgeCDot, badgeBg, badgeTxt, hintEl };
+
+    // ── wire resize drag on all three zones ──────────
+    // resizeDir: 'h' = height only, 'w' = width only, 'both'
+    let rDragging = false, rStartX = 0, rStartY = 0, rStartW = 0, rStartH = 0, rDir = 'both';
+    const MIN_BOX_W = 80, MIN_BOX_H = LABEL_H + FPAD * 2 + 10;
+
+    function startResize(ev, dir) {
+      rDragging = true; rDir = dir;
+      rStartX = ev.clientX; rStartY = ev.clientY;
+      rStartW = fb.w; rStartH = fb.h;
+      ev.stopPropagation(); ev.preventDefault();
+    }
+    edgeB.addEventListener('mousedown', ev => startResize(ev, 'h'));
+    edgeR.addEventListener('mousedown', ev => startResize(ev, 'w'));
+    edgeC.addEventListener('mousedown', ev => startResize(ev, 'both'));
+
+    window.addEventListener('mousemove', ev => {
+      if (!rDragging) return;
+      const dw = (ev.clientX - rStartX) / viewScale;
+      const dh = (ev.clientY - rStartY) / viewScale;
+      const newW = rDir === 'h' ? rStartW : Math.max(MIN_BOX_W, rStartW + dw);
+      const newH = rDir === 'w' ? rStartH : Math.max(MIN_BOX_H, rStartH + dh);
+      const prevW = fb.w, prevH = fb.h;
+      fb.w = newW; fb.h = newH;
+
+      // Update all elements of this folder box (rect + chevron + label + grip)
+      updateFolderElPositions(fp);
+
+      // Proportionally reposition file nodes and child subfolders inside the box
+      repositionContentInFolder(fp, prevW, prevH, newW, newH);
+
+      redrawAllEdgesLive();
+    });
+    window.addEventListener('mouseup', () => { rDragging = false; });
 
     // draw children recursively INSIDE this box
     children.forEach(c => drawFolderBox(c));
@@ -1031,7 +1330,7 @@ function drawFileNode(n) {
     g.appendChild(badge);
   }
   vp.appendChild(g);
-  nodeGroups.push({ el: g, data: n });
+  nodeGroups.push({ el: g, data: n, bg, txt });
 
   g.addEventListener('mouseenter', ev => showTip(ev, n));
   g.addEventListener('mousemove',  ev => moveTip(ev));
@@ -1061,7 +1360,11 @@ function drawFileNode(n) {
     }
     n.x = nx; n.y = ny;
     g.setAttribute('transform','translate('+n.x+','+n.y+')');
+    // resolve all overlaps in this folder (multi-pass, like magnetic repulsion)
+    if (n.folderPath) resolveOverlaps(n.folderPath);
     refreshEdges(n.id);
+    // parent folder box tightly re-wraps around moved file
+    if (n.folderPath) resizeParentBox(n.folderPath);
   });
 }
 
@@ -1757,11 +2060,7 @@ function wireRootInteractions() {
           const cfb=fboxes[f], st=fBoxStarts[f];
           if(!cfb||!st)return;
           cfb.x=st.x+dx; cfb.y=st.y+dy;
-          const cfe=folderEls[f];
-          if(!cfe)return;
-          if(cfe.box){cfe.box.setAttribute('x',cfb.x);cfe.box.setAttribute('y',cfb.y);}
-          if(cfe.chevron){cfe.chevron.setAttribute('x',cfb.x+6);cfe.chevron.setAttribute('y',cfb.y+14);}
-          if(cfe.label){cfe.label.setAttribute('x',cfb.x+18);cfe.label.setAttribute('y',cfb.y+14);}
+          updateFolderElPositions(f);
         });
         fNodeStarts.forEach(({n,x,y})=>{
           n.x=x+dx; n.y=y+dy;
@@ -1777,11 +2076,7 @@ function wireRootInteractions() {
           const cfb=fboxes[f],st=fBoxStarts[f];
           if(!cfb||!st)return;
           cfb.x=st.x+dx; cfb.y=st.y+dy;
-          const cfe=folderEls[f];
-          if(!cfe)return;
-          if(cfe.box){cfe.box.setAttribute('x',cfb.x);cfe.box.setAttribute('y',cfb.y);}
-          if(cfe.chevron){cfe.chevron.setAttribute('x',cfb.x+6);cfe.chevron.setAttribute('y',cfb.y+14);}
-          if(cfe.label){cfe.label.setAttribute('x',cfb.x+18);cfe.label.setAttribute('y',cfb.y+14);}
+          updateFolderElPositions(f);
         });
         fNodeStarts.forEach(({n,x,y})=>{
           n.x=x+dx; n.y=y+dy;
