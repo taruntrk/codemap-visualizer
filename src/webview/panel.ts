@@ -343,18 +343,6 @@ folders.forEach(fp => {
   });
 });
 
-// ── folder-to-folder edge set ─────────────────────────────
-const f2fSet = new Map();  // "A->B" -> { sf, tf, color, count }
-edges.forEach(e => {
-  const sf = e.s.folderPath || '(root)';
-  const tf = e.t.folderPath || '(root)';
-  if (sf === tf) return;
-  const key = sf + '|||' + tf;
-  if (!f2fSet.has(key)) f2fSet.set(key, { sf, tf, count: 0 });
-  f2fSet.get(key).count++;
-});
-const f2fEdges = Array.from(f2fSet.values());
-
 // ── special nodes (css / env / database) layout ───────────
 // These sit in a horizontal strip below the main folder grid
 const cssNodes = nodes.filter(n => n.nodeType === 'css');
@@ -411,25 +399,32 @@ const nodeGroups = [];  // { el, data }
 const collapsedFolders = new Set();  // folders currently collapsed
 const COLLAPSED_H = 32;              // height when collapsed (just header)
 
-function refreshF2fEdge(ee) {
-  const sf = fboxes[ee.sf], tf = fboxes[ee.tf];
-  if (!sf || !tf) return;
-  const x1 = sf.x + sf.w, y1 = sf.y + sf.h / 2;
-  const x2 = tf.x,        y2 = tf.y + tf.h / 2;
-  const cx1 = x1 + Math.abs(x2 - x1) * 0.5, cy1 = y1;
-  const cx2 = x2 - Math.abs(x2 - x1) * 0.5, cy2 = y2;
-  ee.el.setAttribute('d',
-    'M ' + x1 + ' ' + y1 +
-    ' C ' + cx1 + ' ' + cy1 + ' ' + cx2 + ' ' + cy2 +
-    ' ' + x2 + ' ' + y2
-  );
+// ── master edge redraw — handles collapse state for all edges ──
+function redrawAllEdges() {
+  edgeEls.forEach(ee => {
+    const e = ee.data;
+    if (!e.s || !e.t) return;
+    const srcFp = e.s.folderPath || '(root)';
+    const tgtFp = e.t.folderPath || '(root)';
+    const srcCollapsed = collapsedFolders.has(srcFp);
+    const tgtCollapsed = collapsedFolders.has(tgtFp);
+    // both in same collapsed folder → hide
+    if (srcFp === tgtFp && srcCollapsed) { ee.el.style.display = 'none'; return; }
+    ee.el.style.display = '';
+    let x1, y1, x2, y2;
+    if (srcCollapsed) {
+      const fb = fboxes[srcFp]; x1 = fb.x + fb.w / 2; y1 = fb.y + fb.h / 2;
+    } else { const sc = nodeCenter(e.s); x1 = sc.x; y1 = sc.y; }
+    if (tgtCollapsed) {
+      const fb = fboxes[tgtFp]; x2 = fb.x + fb.w / 2; y2 = fb.y + fb.h / 2;
+    } else { const tc = nodeCenter(e.t); x2 = tc.x; y2 = tc.y; }
+    ee.el.setAttribute('d', bezierPath(x1, y1, x2, y2));
+  });
 }
 
 function setFolderCollapsed(fp, collapsed) {
-  const fb = fboxes[fp];
-  const fe = folderEls[fp];
+  const fb = fboxes[fp], fe = folderEls[fp];
   if (!fb || !fe) return;
-
   if (collapsed) {
     collapsedFolders.add(fp);
     fb.h = COLLAPSED_H;
@@ -447,55 +442,6 @@ function setFolderCollapsed(fp, collapsed) {
       if ((ng.data.folderPath || '(root)') === fp) ng.el.style.display = '';
     });
   }
-
-  redrawAllEdges();
-}
-
-// ── master edge redraw — call after any layout change ──
-function redrawAllEdges() {
-  edgeEls.forEach(ee => {
-    if (ee.isF2F) {
-      refreshF2fEdge(ee);
-      return;
-    }
-
-    const e = ee.data;
-    if (!e.s || !e.t) return;
-
-    const srcFp = e.s.folderPath || '(root)';
-    const tgtFp = e.t.folderPath || '(root)';
-    const srcCollapsed = collapsedFolders.has(srcFp);
-    const tgtCollapsed = collapsedFolders.has(tgtFp);
-
-    // both endpoints in same collapsed folder → hide edge
-    if (srcFp === tgtFp && srcCollapsed) {
-      ee.el.style.display = 'none';
-      return;
-    }
-
-    ee.el.style.display = '';
-
-    // get effective x,y for each end
-    let x1, y1, x2, y2;
-    if (srcCollapsed) {
-      const fb = fboxes[srcFp];
-      x1 = fb.x + fb.w / 2; y1 = fb.y + fb.h / 2;
-    } else {
-      const sc = nodeCenter(e.s); x1 = sc.x; y1 = sc.y;
-    }
-    if (tgtCollapsed) {
-      const fb = fboxes[tgtFp];
-      x2 = fb.x + fb.w / 2; y2 = fb.y + fb.h / 2;
-    } else {
-      const tc = nodeCenter(e.t); x2 = tc.x; y2 = tc.y;
-    }
-
-    ee.el.setAttribute('d', bezierPath(x1, y1, x2, y2));
-  });
-}
-
-// reroute helper kept for drag use
-function _rerouteEdgeToBox(ee, collapsedFp) {
   redrawAllEdges();
 }
 
@@ -538,30 +484,6 @@ folders.forEach(fp => {
 });
 
 // ── 2. Folder-to-folder curved edges ──────────
-f2fEdges.forEach(fe => {
-  const sf = fboxes[fe.sf], tf = fboxes[fe.tf];
-  if (!sf || !tf) return;
-
-  // connect center-right of source to center-left of target
-  const x1 = sf.x + sf.w, y1 = sf.y + sf.h / 2;
-  const x2 = tf.x,        y2 = tf.y + tf.h / 2;
-  const cx1 = x1 + Math.abs(x2 - x1) * 0.5, cy1 = y1;
-  const cx2 = x2 - Math.abs(x2 - x1) * 0.5, cy2 = y2;
-  const d   = 'M ' + x1 + ' ' + y1 + ' C ' + cx1 + ' ' + cy1 + ' ' + cx2 + ' ' + cy2 + ' ' + x2 + ' ' + y2;
-
-  const col = folderColor(fe.sf);
-  const path = mkEl('path', {
-    d: d,
-    stroke: col, 'stroke-width': '1.5', fill: 'none', opacity: '0.3',
-    'marker-start': 'url(#dot-f2f)',
-    'marker-end':   'url(#arr-f2f)'
-  });
-  path.classList.add('f2f-edge');
-  path.style.color = col;
-  vp.insertBefore(path, vp.firstChild);  // draw behind everything
-  edgeEls.push({ el: path, data: fe, isF2F: true, sf: fe.sf, tf: fe.tf });
-});
-
 // ── bezier path between two node centres ──────
 function bezierPath(x1, y1, x2, y2) {
   const dx = Math.abs(x2 - x1);

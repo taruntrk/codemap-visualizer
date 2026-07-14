@@ -65,16 +65,25 @@ function resolvePythonModule(moduleName: string, allNodeIds: Set<string>): strin
 }
 
 /**
- * JS/TS: "./utils" -> "src/utils.ts" (relative imports only, npm packages skip)
+ * JS/TS/JSX/TSX: "./utils" -> "src/utils.ts" or "src/utils.jsx" etc.
+ * Also handles imports with explicit extension: "./App.jsx" -> "src/App.jsx"
  */
 function resolveJsTsModule(moduleName: string, sourceFileId: string, allNodeIds: Set<string>): string | null {
-    // sirf relative imports — npm packages (react, express, etc.) skip
+    // sirf relative imports — npm packages skip
     if (!moduleName.startsWith('.')) return null;
 
     const sourceDir = path.dirname(sourceFileId);
-    const resolved = path.join(sourceDir, moduleName).replace(/\\/g, '/');
+    const resolved  = path.join(sourceDir, moduleName).replace(/\\/g, '/');
 
+    // If import already has an explicit extension, try it directly first
+    const knownExts = ['.ts', '.tsx', '.js', '.jsx'];
+    if (knownExts.some(ext => moduleName.endsWith(ext))) {
+        if (allNodeIds.has(resolved)) return resolved;
+    }
+
+    // Try all extensions + index files (covers js→jsx, ts→tsx, py→jsx etc.)
     const candidates = [
+        resolved,               // exact match (already has ext)
         `${resolved}.ts`,
         `${resolved}.tsx`,
         `${resolved}.js`,
@@ -95,12 +104,17 @@ function buildImportEdges(parsedFiles: FileParseResult[], allNodeIds: Set<string
     const edges: GraphEdge[] = [];
 
     for (const file of parsedFiles) {
-        for (const imp of file.imports) {
-            // pehle Python resolution try karo
-            let targetId = resolvePythonModule(imp.from, allNodeIds);
+        const isPython = file.language === 'python';
 
-            // agar Python ne nahi pakda to JS/TS resolution try karo
-            if (!targetId) {
+        for (const imp of file.imports) {
+            let targetId: string | null = null;
+
+            if (isPython) {
+                // Python: try Python module resolution first, then JS/TS as fallback
+                targetId = resolvePythonModule(imp.from, allNodeIds);
+                if (!targetId) targetId = resolveJsTsModule(imp.from, file.id, allNodeIds);
+            } else {
+                // JS/TS/JSX/TSX: only JS/TS resolution
                 targetId = resolveJsTsModule(imp.from, file.id, allNodeIds);
             }
 
@@ -122,22 +136,21 @@ function buildCallEdges(parsedFiles: FileParseResult[], allNodeIds: Set<string>)
     const edges: GraphEdge[] = [];
 
     for (const file of parsedFiles) {
+        const isPython = file.language === 'python';
         const symbolToTarget = new Map<string, string>();
 
         for (const imp of file.imports) {
-            // Python resolution
-            let targetId = resolvePythonModule(imp.from, allNodeIds);
+            let targetId: string | null = null;
 
-            // JS/TS resolution fallback
-            if (!targetId) {
+            if (isPython) {
+                targetId = resolvePythonModule(imp.from, allNodeIds);
+                if (!targetId) targetId = resolveJsTsModule(imp.from, file.id, allNodeIds);
+            } else {
                 targetId = resolveJsTsModule(imp.from, file.id, allNodeIds);
             }
 
             if (!targetId) continue;
-
-            for (const name of imp.names) {
-                symbolToTarget.set(name, targetId);
-            }
+            for (const name of imp.names) symbolToTarget.set(name, targetId);
         }
 
         if (symbolToTarget.size === 0) continue;
