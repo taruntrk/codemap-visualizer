@@ -658,8 +658,131 @@ codemap-visualizer/
 
 ---
 
-## 🔮 Next steps
+## 🔮 Next steps / Future Plan (complete, updated)
 
-1. **Visualization polish** — test on real projects, fix any remaining layout edge cases
-2. **AI enrichment layer** — Claude API se har node ka `summary`/`category` fill karna
-3. **Frontend↔Backend API call matching** — `fetch('/api/x')` ↔ `@app.post("/api/x")`
+### ⏳ IMMEDIATE — Code ready hai, sirf implement karna hai
+
+#### 1. 🔁 Smart Auto-Collapse on Load
+**File:** `src/webview/panel.ts` → `renderRoot()` → line ~1229 ke baad insert karo
+
+```js
+// 2b. Auto-collapse folders that have no connected files
+{
+  const allFoldersSorted = [...folders].sort((a, b) => {
+    const da = a.split('/').length, db = b.split('/').length;
+    return db - da; // deeper folders first
+  });
+  allFoldersSorted.forEach(fp => {
+    const filesUnder = getAllFilesUnder(fp);
+    const hasConnection = filesUnder.some(n => connectedIds.has(n.id));
+    if (!hasConnection) {
+      setFolderCollapsed(fp, true);
+    }
+  });
+}
+```
+
+#### 2. 🔘 Collapse All / Expand All Button
+**File:** `src/webview/panel.ts` — 4 jagah:
+
+CSS (`getStyles()` → `#resetBtn:hover` ke baad):
+```css
+#collapseAllBtn {
+  margin-top: 6px; margin-left: 6px; background: #3c3c5a;
+  border: none; color: #9cdcfe; padding: 4px 12px;
+  border-radius: 5px; cursor: pointer; font-size: 11px;
+}
+#collapseAllBtn:hover { background: #4c4c7a; }
+```
+
+HTML (`getToolbar()` → `resetBtn` ke baad):
+```html
+<button id="collapseAllBtn">&#9654; Collapse All</button>
+```
+
+JS variable (`getJs1()` → `const resetBtn` ke baad):
+```js
+const collapseAllBtn = document.getElementById('collapseAllBtn');
+```
+
+Event listener (`resetBtn.addEventListener` ke baad):
+```js
+let _allCollapsed = false;
+collapseAllBtn.addEventListener('click', () => {
+  if (viewMode !== 'root') return;
+  _allCollapsed = !_allCollapsed;
+  collapseAllBtn.textContent = _allCollapsed ? '▼ Expand All' : '▶ Collapse All';
+  folders.forEach(fp => setFolderCollapsed(fp, _allCollapsed));
+  redrawAllEdges();
+});
+```
+
+Build: `node esbuild.js`
+
+---
+
+### 🔮 FUTURE — Planned features
+
+#### 3. 🌐 Frontend ↔ Backend API Call Matching
+- JS/TS mein `fetch('/api/x')`, `axios.get('/api/x')` detect karo
+- Python mein FastAPI/Flask `@app.get('/api/x')`, `@router.post(...)` detect karo
+- `graphBuilder.ts` mein match karo → nayi edge type `'api-call'` (pink/magenta)
+- **Files:** `jstsParser.ts`, `pythonParser.ts`, `graphBuilder.ts`, `panel.ts`
+
+#### 4. 🤖 AI Enrichment Layer
+- Har node ke liye AI-generated summary — "ye file kya karti hai", category (auth/db/api/util)
+- Claude API / VS Code LLM API se integrate karo
+- `summary` aur `category` fields fill karo (abhi `null` hain graph schema mein)
+- Tooltip mein dikhao + category-based layout/color option
+- **Files:** `extension.ts`, `graphBuilder.ts`, `panel.ts`
+
+#### 5. 🔍 Search / Filter Bar
+- Toolbar mein `<input>` — filename type karo, matching nodes highlight, baaki dim
+- `Escape` → clear + full restore
+- **Files:** `panel.ts` only
+
+#### 6. 📦 Performance — Large Projects (1000+ files)
+- Better skip: `node_modules`, `.git`, `dist`, `build`, `__pycache__` (configurable)
+- SVG virtualization — off-screen nodes ka DOM element create na karo
+- Web Worker mein layout compute karo
+- **Files:** `scanner.ts`, `panel.ts`
+
+#### 7. ⚙️ VS Code Settings / Configuration
+- Kaunse extensions scan hon, kaunse folders ignore hon
+- `.codemapignore` file support
+- Auto-collapse on/off toggle, default zoom level
+- **Files:** `package.json` (contributes.configuration), `extension.ts`, `scanner.ts`
+
+#### 8. 🗺️ Minimap
+- Canvas corner mein chhota overview — current viewport rectangle overlay
+- Click/drag on minimap → jump to area
+- **Files:** `panel.ts` only
+
+#### 9. 📸 Export Graph as Image / JSON
+- PNG/SVG export via SVG serialization → Blob → download
+- JSON export (`nodes[]` + `edges[]`) for external tools
+- **Files:** `panel.ts`, `extension.ts`
+
+---
+
+## ✅ Milestones achieved (full list, current)
+
+1. ✅ "Hello World" command
+2. ✅ Phase 1 basic scanning
+3. ✅ Tree-sitter Python parsing bug fixed
+4. ✅ Phase 2 — JSON graph builder (import + call edges)
+5. ✅ Phase 3 v1 — basic interactive webview
+6. ✅ Phase 3 v2 — pan/zoom, glow/lighting
+7. ✅ Phase 3 v3 — directional arrowheads
+8. ✅ Phase 3 v4/v5 — folder clustering + drill-down (superseded)
+9. ✅ Phase 3 v6 — horizontal execution-flow layout (entry-point detection)
+10. ✅ Phase 3 v7 — folder-grouping bands inside horizontal flow
+11. ✅ Ctrl+Click to open file in VS Code
+12. ✅ JS/TS/JSX/TSX parsing (`jstsParser.ts`)
+13. ✅ JS/TS relative import resolution in `graphBuilder.ts`
+14. ✅ Arrow direction fixed
+15. ✅ CSS / ENV / DB file support with dedicated sections + colored edges
+16. ✅ Entry point detection (gold border), unused file detection (red)
+17. ✅ Rich tooltips for nodes, edges, folders, CSS/ENV/DB nodes
+18. ✅ **Phase 3 v8 — Nested folder boxes, two-pass layout, ROOT_FP normalisation** ← CURRENT
+19. ⏳ Auto-collapse on load + Collapse All button — code ready, implement karna hai (see above)

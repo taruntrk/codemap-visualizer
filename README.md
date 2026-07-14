@@ -243,6 +243,188 @@ vsce publish
 
 ---
 
+## Pending Work / TODO
+
+> Yeh section track karta hai — **abhi kya implement karna baaki hai**, aur **aage kya banana hai**.
+
+---
+
+### ⏳ IMMEDIATE — Abhi implement karna hai (code ready hai, sirf paste karna hai)
+
+---
+
+#### 1. 🔁 Smart Auto-Collapse on Load
+
+**Problem:** Jab bhi map open hota hai, saari folders expanded hoti hain — large projects mein bahut cluttered dikhta hai.
+
+**Solution — `src/webview/panel.ts` → `renderRoot()` function:**
+
+`topFolders.forEach(fp => drawFolderBox(fp));` (line ~1229) ke baad, `// 3. Folder-to-folder aggregated edges` se pehle yeh block insert karo:
+
+```js
+// 2b. Auto-collapse folders that have no connected files
+{
+  const allFoldersSorted = [...folders].sort((a, b) => {
+    const da = a.split('/').length, db = b.split('/').length;
+    return db - da; // deeper folders first
+  });
+
+  allFoldersSorted.forEach(fp => {
+    const filesUnder = getAllFilesUnder(fp);
+    const hasConnection = filesUnder.some(n => connectedIds.has(n.id));
+    if (!hasConnection) {
+      setFolderCollapsed(fp, true);
+    }
+  });
+}
+```
+
+**Variables already available:** `folders`, `getAllFilesUnder()`, `connectedIds`, `setFolderCollapsed()`
+
+**Result:** Sirf woh folders open rehte hain jinke files ke beech edges hain. Unused/disconnected folders by default collapsed.
+
+---
+
+#### 2. 🔘 "Collapse All / Expand All" Toggle Button
+
+**File:** `src/webview/panel.ts` — 4 jagah changes:
+
+**CSS** (`getStyles()` → `#resetBtn:hover` ke baad):
+```css
+#collapseAllBtn {
+  margin-top: 6px;
+  margin-left: 6px;
+  background: #3c3c5a;
+  border: none;
+  color: #9cdcfe;
+  padding: 4px 12px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 11px;
+}
+#collapseAllBtn:hover { background: #4c4c7a; }
+```
+
+**HTML** (`getToolbar()` → `<button id="resetBtn">` ke baad):
+```html
+<button id="collapseAllBtn">&#9654; Collapse All</button>
+```
+
+**JS variable** (`getJs1()` → `const resetBtn` ke baad):
+```js
+const collapseAllBtn = document.getElementById('collapseAllBtn');
+```
+
+**Event listener** (`resetBtn.addEventListener` ke baad):
+```js
+let _allCollapsed = false;
+collapseAllBtn.addEventListener('click', () => {
+  if (viewMode !== 'root') return;
+  _allCollapsed = !_allCollapsed;
+  collapseAllBtn.textContent = _allCollapsed ? '▼ Expand All' : '▶ Collapse All';
+  folders.forEach(fp => setFolderCollapsed(fp, _allCollapsed));
+  redrawAllEdges();
+});
+```
+
+**Build command after changes:** `node esbuild.js`
+
+---
+
+### 🔮 FUTURE — Aage banana hai (planned features)
+
+---
+
+#### 3. 🌐 Frontend ↔ Backend API Call Matching
+
+**What:** JS/TS frontend mein `fetch('/api/users')` aur Python/Node backend mein `@app.get('/api/users')` ko automatically match karke ek edge draw karo.
+
+**How:**
+- JS parser mein `fetch()`, `axios.get()`, `axios.post()` calls detect karo — URL extract karo
+- Python parser mein FastAPI/Flask route decorators `@app.get(...)`, `@router.post(...)` detect karo — route path extract karo
+- `graphBuilder.ts` mein dono ko match karo — ek nayi edge type `'api-call'` (pink/magenta color)
+- `panel.ts` mein is edge type ke liye alag styling (dashed pink line)
+
+**Files to change:** `jstsParser.ts`, `pythonParser.ts`, `graphBuilder.ts`, `panel.ts`
+
+---
+
+#### 4. 🤖 AI Enrichment Layer
+
+**What:** Har node pe ek AI-generated summary dikhao — "ye file kya karti hai", category (auth/db/api/util etc.)
+
+**How:**
+- Extension mein Claude API / VS Code LLM API integrate karo
+- Har file ka content (ya functions list) bhejo, summary wapas lo
+- Node ke `summary` aur `category` fields fill karo (abhi `null` hain)
+- Tooltip mein summary dikhao; layout mein category-based color/grouping option
+
+**Files to change:** `extension.ts` (API call), `graphBuilder.ts` (fields add), `panel.ts` (tooltip + display)
+
+---
+
+#### 5. 🔍 Search / Filter Bar
+
+**What:** Toolbar mein ek search box — filename type karo, sirf matching nodes highlight/focus ho jaayein, baaki dim.
+
+**How:**
+- `getToolbar()` mein `<input id="searchBox" placeholder="Search file...">` add karo
+- `input` event pe `nodes` array filter karo by `fileName`
+- Matching nodes bright, non-matching dim (same CSS classes jo isolation mein use hoti hain)
+- `Escape` press → search clear, full view restore
+
+**Files to change:** `panel.ts` only
+
+---
+
+#### 6. 📦 Performance — Large Projects (1000+ files)
+
+**What:** Very large projects pe scan slow hota hai aur SVG laggy hoti hai.
+
+**Improvements planned:**
+- Scanner mein `node_modules`, `.git`, `dist`, `build`, `__pycache__` better skip karo (configurable ignore list)
+- SVG rendering mein virtualization — sirf visible viewport ke nodes render karo (off-screen nodes ka DOM element create na karo)
+- Web Worker mein graph layout compute karo taaki UI thread block na ho
+
+---
+
+#### 7. ⚙️ Settings / Configuration
+
+**What:** User VS Code settings se control kar sake:
+- Kaunsi file extensions scan hon
+- Kaunse folders ignore hon (custom `.codemapignore` file support)
+- Max file count limit
+- Default zoom level
+- Auto-collapse on/off toggle (instead of always-on)
+
+**Files to change:** `package.json` (contributes.configuration), `extension.ts` (read settings), `scanner.ts` (apply filters)
+
+---
+
+#### 8. 🗺️ Minimap
+
+**What:** Canvas ke corner mein ek chhota overview minimap — pura graph chhota dikhao, aur current viewport ka rectangle dikhao. Click/drag on minimap → jump to that area.
+
+**How:** Second smaller SVG element, same graph data se scaled-down render, viewport rect overlay.
+
+**Files to change:** `panel.ts` only
+
+---
+
+#### 9. 📸 Export Graph as Image / JSON
+
+**What:**
+- **PNG/SVG export** — toolbar button → current graph SVG ko file mein save karo
+- **JSON export** — raw graph JSON (`nodes[]` + `edges[]`) download karo for external tools
+
+**How:**
+- SVG serialization → `Blob` → download link
+- `vscode.postMessage` → extension side pe file write
+
+**Files to change:** `panel.ts`, `extension.ts`
+
+---
+
 ## Known Issues
 
 - Very large projects (1000+ files) may take a few seconds to scan
