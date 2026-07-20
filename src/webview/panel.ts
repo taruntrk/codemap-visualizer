@@ -163,8 +163,8 @@ svg { width:100vw; height:100vh; display:block; cursor:grab; }
 .node.dim { opacity:0.05; transition:opacity 0.4s; }
 .node { transition:opacity 0.4s; }
 .node.entry rect.core { stroke:#ffd700; stroke-width:2px; }
-.node.unused rect.core { fill:#ff000022 !important; stroke:#e05555 !important; stroke-width:1.5px !important; }
-.node.unused text { fill:#ff9090; }
+.node.unused rect.core { fill:#6e6e6e22 !important; stroke:#6e6e6e !important; stroke-width:0.6px !important; opacity:0.7; }
+.node.unused text { fill:#aaaaaa; }
 .node text { fill:#e0e0e0; font-size:11px; pointer-events:none; }
 
 /* folder-to-folder edges */
@@ -227,7 +227,7 @@ function getToolbar(): string {
   </div>
   <div id="legendRow1">
     <span class="legend-dot" style="background:#ffd700;border:1px solid #ffd700"></span><b>Gold</b> = entry &nbsp;
-    <span class="legend-dot" style="background:#e05555"></span><b style="color:#ff9090">Red</b> = unused &nbsp;
+    <span class="legend-dot" style="background:#6e6e6e;opacity:0.6"></span><b style="color:#aaaaaa">Gray</b> = unused &nbsp;
     <span class="legend-dot" style="background:#c586c0"></span>CSS &nbsp;
     <span class="legend-dot" style="background:#dcdcaa"></span>ENV &nbsp;
     <span class="legend-dot" style="background:#4ec9b0"></span>DB
@@ -343,9 +343,21 @@ for (let p = 0; p < Math.min(nodes.length, 80); p++) {
 // ── folder grouping ───────────────────────────────────────
 // Normalise folderPath: '' (root-level files) → project name
 const ROOT_FP = graph.projectName || 'project';
+
+// Compute connected/unused EARLY so folderMap only gets connected files
+const connectedIds = new Set();
+edges.forEach(e => { connectedIds.add(e.source); connectedIds.add(e.target); });
+const unusedIds = new Set(nodes.filter(n => !connectedIds.has(n.id)).map(n => n.id));
+
+// Unused code nodes → go into the gray "Unused Files" box, NOT folder boxes
+const unusedCodeNodes = nodes.filter(n =>
+  n.nodeType === 'code' && unusedIds.has(n.id)
+);
+
 const folderMap = {};   // fp -> node[]  (direct files only, not descendants)
 nodes.forEach(n => {
   if (n.nodeType === 'css' || n.nodeType === 'env' || n.nodeType === 'database') return;
+  if (unusedIds.has(n.id)) return;   // ← unused files go to gray box, not folder
   const fp = n.folderPath || ROOT_FP;
   n.folderPath = fp;   // normalise in-place so edge anchoring uses the same key
   (folderMap[fp] = folderMap[fp] || []).push(n);
@@ -439,7 +451,7 @@ function computeFboxSize(fp, depth) {
   const bw = innerW + FPAD * 2;
   const bh = LABEL_H + FPAD + Math.max(innerH, 4) + FPAD;
 
-  fboxes[fp] = { w: bw, h: bh, origH: bh, color, depth, x: 0, y: 0 };
+  fboxes[fp] = { w: bw, h: bh, origW: bw, origH: bh, color, depth, x: 0, y: 0 };
 }
 
 topFolders.forEach(fp => computeFboxSize(fp, 0));
@@ -498,37 +510,23 @@ function positionFbox(fp, startX, startY) {
   const actualH = contentBottom + FPAD - startY;
   fb.h     = Math.max(actualH, LABEL_H + FPAD * 2);
   fb.origH = fb.h;
+  fb.origW = fb.w;  // save original width for proportional resize
 
   return startY + fb.h;   // return actual bottom Y for parent to use
 }
 
-// Grid layout for top-level boxes:
-// Run positionFbox at a temporary origin first to get actual sizes,
-// then arrange in a grid using those real sizes.
-const COLS = Math.max(1, Math.ceil(Math.sqrt(topFolders.length)));
-// First pass at origin to learn actual sizes
+// ── Vertical stack layout for top-level boxes ────────────
+// All top-level folders stacked vertically in one column (left side).
+// Special boxes (CSS/ENV/DB/Unused) go in a right-side column.
+// First pass at origin to learn actual sizes, then position final.
 let _tmpY = 0;
 topFolders.forEach(fp => { positionFbox(fp, 0, _tmpY); _tmpY += fboxes[fp].h + FGAP_Y; });
 
-// Build column widths and row heights from actual fbox sizes
-const colW = {}, rowH = {};
-topFolders.forEach((fp, fi) => {
-  const col = fi % COLS, row = Math.floor(fi / COLS);
-  fboxes[fp]._col = col; fboxes[fp]._row = row;
-  colW[col] = Math.max(colW[col] || 0, fboxes[fp].w);
-  rowH[row] = Math.max(rowH[row] || 0, fboxes[fp].h);
-});
-
-const colX = {}, rowY = {};
-let cx = FGAP_X;
-for (let c = 0; c < COLS; c++) { colX[c] = cx; cx += (colW[c] || 0) + FGAP_X; }
-let cy = 60;
-const maxRow = Math.max(0, ...topFolders.map(fp => fboxes[fp]._row || 0));
-for (let r = 0; r <= maxRow; r++) { rowY[r] = cy; cy += (rowH[r] || 0) + FGAP_Y; }
-
-// Final pass: position everything at correct grid coordinates
+// Final pass: stack vertically at x=FGAP_X
+let _curY = 60;
 topFolders.forEach(fp => {
-  positionFbox(fp, colX[fboxes[fp]._col], rowY[fboxes[fp]._row]);
+  positionFbox(fp, FGAP_X, _curY);
+  _curY += fboxes[fp].h + FGAP_Y;
 });
 
 // ── special nodes layout ──────────────────────────────────
@@ -563,6 +561,25 @@ sx = cssBox.endX + (cssBox.w ? SPECIAL_COL_GAP : 0);
 const envBox = layoutSpecialGroup(envNodes, sx, specialY);  envBox.color = '#dcdcaa';
 sx = envBox.endX + (envBox.w ? SPECIAL_COL_GAP : 0);
 const dbBox  = layoutSpecialGroup(dbNodes,  sx, specialY);  dbBox.color  = '#4ec9b0';
+sx = dbBox.endX + (dbBox.w ? SPECIAL_COL_GAP : 0);
+
+// ── Unused Files box — gray, wider to fit file names ──────
+function layoutUnusedGroup(unodes, startX, y) {
+  if (!unodes.length) return { x: startX, y, w: 0, h: 0, endX: startX };
+  // normalise folderPath for unused nodes too
+  unodes.forEach(n => { if (!n.folderPath) n.folderPath = ROOT_FP; });
+  const maxW = Math.max(...unodes.map(n => n.fileName.length * 7 + 20), SPECIAL_NODE_W);
+  const bw = maxW + SPECIAL_PAD * 2;
+  const bh = unodes.length * (SPECIAL_NODE_H + 6) + SPECIAL_PAD * 2 + 20;
+  unodes.forEach((n, i) => {
+    n.x = startX + SPECIAL_PAD;
+    n.y = y + 20 + SPECIAL_PAD + i * (SPECIAL_NODE_H + 6);
+    n.rootX = n.x; n.rootY = n.y;
+  });
+  return { x: startX, y, w: bw, h: bh, endX: startX + bw };
+}
+const unusedBox = layoutUnusedGroup(unusedCodeNodes, sx, specialY);
+unusedBox.color = '#6e6e6e';
 
 // ── folder-to-folder connection map (for root view f2f edges) ─
 // f2fMap[fpA][fpB] = count of file-level edges between them
@@ -575,11 +592,6 @@ edges.forEach(e => {
   if (!f2fMap[sf][tf]) f2fMap[sf][tf] = 0;
   f2fMap[sf][tf]++;
 });
-
-// ── unused files ──────────────────────────────────────────
-const connectedIds = new Set();
-edges.forEach(e => { connectedIds.add(e.source); connectedIds.add(e.target); });
-const unusedIds = new Set(nodes.filter(n => !connectedIds.has(n.id)).map(n => n.id));
 
 // ── view mode state ───────────────────────────────────────
 let viewMode = 'root';        // 'root' | 'folder'
@@ -921,6 +933,90 @@ function repositionContentInFolder(fp, prevW, prevH, newW, newH) {
   });
 }
 
+// ── reflowFolderContent: responsive resize when folder box is scaled ──────────
+// When parent is resized → children scale proportionally (size + position).
+// Files also reposition proportionally.
+// Recursive: resizing a child also reflows its own children.
+function reflowFolderContent(fp) {
+  const fb = fboxes[fp];
+  if (!fb) return;
+
+  const children    = folderChildren(fp);
+  const directFiles = sortFolderNodes(folderMap[fp] || []);
+  const contentX    = fb.x + FPAD;
+  const contentY    = fb.y + LABEL_H + FPAD;
+  const availW      = Math.max(60, fb.w - FPAD * 2);
+  const availH      = Math.max(20, fb.h - LABEL_H - FPAD * 2);
+
+  if (children.length > 0) {
+    // Calculate total original children dimensions to derive scale factors
+    const origChildrenW = children.reduce((sum, c, i) => {
+      const cfb = fboxes[c];
+      return sum + (cfb ? cfb.origW || cfb.w : 0) + (i > 0 ? NODE_GAP_X : 0);
+    }, 0);
+    const origChildrenH = Math.max(...children.map(c => {
+      const cfb = fboxes[c]; return cfb ? cfb.origH || cfb.h : 0;
+    }));
+
+    // Scale factors based on available space vs original sizes
+    const scaleW = origChildrenW > 0 ? availW / origChildrenW : 1;
+    const scaleH = origChildrenH > 0
+      ? (directFiles.length > 0 ? (availH * 0.6) : availH) / origChildrenH
+      : 1;
+
+    // Use the smaller scale to keep proportions (uniform scaling)
+    const scale = Math.min(scaleW, scaleH, 1.5);  // cap at 1.5x to avoid explosion
+
+    // Reposition + resize each child proportionally
+    let curX = contentX;
+    let maxChildH = 0;
+    children.forEach((c, i) => {
+      const cfb = fboxes[c];
+      if (!cfb) return;
+
+      // Store original size if not stored yet
+      if (!cfb.origW) cfb.origW = cfb.w;
+      if (!cfb.origH) cfb.origH = cfb.h;
+
+      // New size = original * scale
+      const newCW = Math.max(60, cfb.origW * scale);
+      const newCH = Math.max(LABEL_H + FPAD * 2, cfb.origH * scale);
+
+      cfb.x = curX;
+      cfb.y = contentY;
+      cfb.w = newCW;
+      cfb.h = newCH;
+
+      // Recurse — resize this child's content too
+      reflowFolderContent(c);
+
+      maxChildH = Math.max(maxChildH, cfb.h);
+      curX += cfb.w + NODE_GAP_X;
+    });
+
+    // Reposition files below children
+    const filesY = contentY + maxChildH + (directFiles.length > 0 ? CHILD_PAD : 0);
+    directFiles.forEach((n, i) => {
+      n.x = contentX;
+      n.y = filesY + i * (nodeH() + NODE_GAP_Y);
+      const ng = nodeGroups.find(g => g.data.id === n.id);
+      if (ng) ng.el.setAttribute('transform', 'translate('+n.x+','+n.y+')');
+    });
+
+  } else {
+    // No children — just reflow files to fill available width
+    directFiles.forEach((n, i) => {
+      n.x = contentX;
+      n.y = contentY + i * (nodeH() + NODE_GAP_Y);
+      const ng = nodeGroups.find(g => g.data.id === n.id);
+      if (ng) ng.el.setAttribute('transform', 'translate('+n.x+','+n.y+')');
+    });
+  }
+
+  // Update this folder's SVG elements
+  updateFolderElPositions(fp);
+}
+
 // ── resolveOverlaps: multi-pass magnetic repulsion for all nodes in a folder ──
 // Keeps running passes until no two nodes overlap (or max passes reached).
 // Dragged node is pinned — everything else moves away from it and each other.
@@ -1209,14 +1305,10 @@ function renderRoot() {
       const dh = (ev.clientY - rStartY) / viewScale;
       const newW = rDir === 'h' ? rStartW : Math.max(MIN_BOX_W, rStartW + dw);
       const newH = rDir === 'w' ? rStartH : Math.max(MIN_BOX_H, rStartH + dh);
-      const prevW = fb.w, prevH = fb.h;
       fb.w = newW; fb.h = newH;
 
-      // Update all elements of this folder box (rect + chevron + label + grip)
-      updateFolderElPositions(fp);
-
-      // Proportionally reposition file nodes and child subfolders inside the box
-      repositionContentInFolder(fp, prevW, prevH, newW, newH);
+      // Reflow content inside the box (like responsive layout — children re-wrap)
+      reflowFolderContent(fp);
 
       redrawAllEdgesLive();
     });
@@ -1227,6 +1319,21 @@ function renderRoot() {
   }
 
   topFolders.forEach(fp => drawFolderBox(fp));
+
+  // 2b. Auto-collapse/expand based on connections
+  //     Connected folder (has at least one file with an edge) → expand
+  //     Unconnected folder → collapse
+  //     Process deepest folders first so parent state is set correctly
+  {
+    const allFoldersSorted = [...folders].sort((a, b) =>
+      b.split('/').length - a.split('/').length  // deepest first
+    );
+    allFoldersSorted.forEach(fp => {
+      const filesUnder  = getAllFilesUnder(fp);
+      const hasConnection = filesUnder.some(n => connectedIds.has(n.id));
+      setFolderCollapsed(fp, !hasConnection);
+    });
+  }
 
   // 3. Folder-to-folder aggregated edges (top-level only)
   const drawnF2F = new Set();
@@ -1294,6 +1401,10 @@ function renderRoot() {
       drawSpecialNode(n);
   });
 
+  // 7. Unused files — gray virtual box at the bottom
+  drawSpecialSection(unusedBox, 'Unused Files', '🗑\uFE0F');
+  unusedCodeNodes.forEach(n => drawFileNode(n));
+
   // 7. Wire up interactions
   wireRootInteractions();
   fitView();
@@ -1303,9 +1414,9 @@ function renderRoot() {
 function drawFileNode(n) {
   const isSpecial = n.nodeType === 'css' || n.nodeType === 'env' || n.nodeType === 'database';
   if (isSpecial) return;
-  const col      = folderColor(n.folderPath || '(root)');
-  const isEntry  = entryIds.has(n.id);
   const isUnused = unusedIds.has(n.id);
+  const col      = isUnused ? '#6e6e6e' : folderColor(n.folderPath || '(root)');
+  const isEntry  = entryIds.has(n.id);
   const nw = nodeW(n), nh = nodeH();
 
   const g = mkEl('g', {
@@ -1315,10 +1426,10 @@ function drawFileNode(n) {
   });
   const bg = mkEl('rect', {
     x:0, y:0, width:nw, height:nh, rx:5, ry:5,
-    fill: isUnused ? '#ff000022' : col,
-    'fill-opacity': isUnused ? '1' : '0.18',
-    stroke: isEntry ? '#ffd700' : (isUnused ? '#e05555' : col),
-    'stroke-width': isEntry ? '2' : (isUnused ? '1.5' : '0.8'),
+    fill: col,
+    'fill-opacity': isUnused ? '0.12' : '0.18',
+    stroke: isEntry ? '#ffd700' : col,
+    'stroke-width': isEntry ? '2' : (isUnused ? '0.6' : '0.8'),
     class: 'core'
   });
   const txt = mkEl('text', { x:8, y:18, 'font-size':'11' });

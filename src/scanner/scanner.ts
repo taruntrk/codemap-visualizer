@@ -1,19 +1,53 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-const IGNORE_LIST = ['node_modules', '.git', '__pycache__', 'venv', 'dist', 'build', '.vscode'];
+const IGNORE_DIRS = new Set([
+    // dependency / build output
+    'node_modules', '.git', '__pycache__', 'venv', '.venv', 'env',
+    'dist', 'build', 'out', '.next', '.nuxt', '.svelte-kit',
+    // cache / temp
+    '.cache', '.parcel-cache', '.turbo', 'coverage', '.nyc_output',
+    '.pytest_cache', '.mypy_cache', '.ruff_cache',
+    // IDE / OS
+    '.vscode', '.idea',
+    // large data / static asset folders
+    'backup', 'backups', 'logs', 'log',
+    'assets', 'public', 'static', 'media',
+    // schema / context / chunk dumps (large JSON folders)
+    'schema', 'context', 'chunks', 'qdrant_storage',
+    // python env internals
+    'site-packages', 'lib', 'lib64', 'bin', 'share', 'include',
+    // misc heavy folders
+    'migrations', 'fixtures', 'seeds', 'testing',
+    // third-party framework apps (frappe bench)
+    'apps', 'frappe', 'erpnext', 'iitdata',
+]);
+
+// Max file size to parse — skip huge generated files (500 KB)
+const MAX_FILE_BYTES = 500_000;
 
 export function walkFolder(dirPath: string): string[] {
     let filesList: string[] = [];
-    const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    let entries: fs.Dirent[];
+    try {
+        entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    } catch {
+        return filesList; // permission denied — skip silently
+    }
     for (const entry of entries) {
+        if (IGNORE_DIRS.has(entry.name)) continue;
         const fullPath = path.join(dirPath, entry.name);
         if (entry.isDirectory()) {
-            if (!IGNORE_LIST.includes(entry.name)) {
-                filesList = filesList.concat(walkFolder(fullPath));
-            }
+            filesList = filesList.concat(walkFolder(fullPath));
         } else {
-            filesList.push(fullPath);
+            try {
+                const stat = fs.statSync(fullPath);
+                if (stat.size <= MAX_FILE_BYTES) {
+                    filesList.push(fullPath);
+                }
+            } catch {
+                // skip unreadable files
+            }
         }
     }
     return filesList;
