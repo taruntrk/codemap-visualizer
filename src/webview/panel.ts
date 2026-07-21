@@ -689,23 +689,52 @@ function edgeAnchor(n, side) {
   if (!isNodeHidden(n)) {
     return side === 'right' ? nodeRight(n) : nodeLeft(n);
   }
-  // find nearest collapsed ancestor
+  
+  // Node is hidden, find nearest collapsed ancestor
   let fp = n.folderPath || ROOT_FP;
   while (fp) {
     if (collapsedFolders.has(fp)) {
       const fb = fboxes[fp];
-      if (fb) return { x: fb.x + fb.w/2, y: fb.y + COLLAPSED_H/2 };
+      if (fb) {
+        return { x: fb.x + fb.w/2, y: fb.y + COLLAPSED_H/2 };
+      }
     }
     fp = folderParent(fp);
   }
+  
   return side === 'right' ? nodeRight(n) : nodeLeft(n);
 }
 
 function redrawAllEdges() {
   edgeEls.forEach(ee => {
-    if (ee.isF2F) return; // f2f edges don't need per-node redraw
     const e = ee.data;
     if (!e.s || !e.t) return;
+    
+    if (ee.isF2F) {
+      // Handle folder-to-folder edges during collapse/expand
+      const srcFp = e.sourceFp || ROOT_FP;
+      const tgtFp = e.targetFp || ROOT_FP; 
+      
+      // Check if source or target folder is collapsed
+      const srcCollapsed = collapsedFolders.has(srcFp);
+      const tgtCollapsed = collapsedFolders.has(tgtFp);
+      
+      if (srcCollapsed || tgtCollapsed) {
+        // Reroute f2f edge to collapsed folder centers
+        const srcBox = fboxes[srcFp];
+        const tgtBox = fboxes[tgtFp];
+        if (srcBox && tgtBox) {
+          const x1 = srcBox.x + srcBox.w / 2;
+          const y1 = srcCollapsed ? srcBox.y + COLLAPSED_H/2 : srcBox.y + srcBox.h/2;
+          const x2 = tgtBox.x + tgtBox.w / 2; 
+          const y2 = tgtCollapsed ? tgtBox.y + COLLAPSED_H/2 : tgtBox.y + tgtBox.h/2;
+          ee.el.setAttribute('d', bezierPath(x1, y1, x2, y2));
+        }
+      }
+      return;
+    }
+    
+    // Handle regular node-to-node edges
     const srcFp = e.s.folderPath || ROOT_FP;
     const tgtFp = e.t.folderPath || ROOT_FP;
     // both in same collapsed folder → hide
