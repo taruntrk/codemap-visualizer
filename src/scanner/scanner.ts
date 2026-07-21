@@ -3,23 +3,18 @@ import * as path from 'path';
 
 const IGNORE_DIRS = new Set([
     // dependency / build output
-    'node_modules', '.git', '__pycache__', 'venv', '.venv', 'env',
+    'node_modules', '.git', '__pycache__', 'venv', '.venv',
     'dist', 'build', 'out', '.next', '.nuxt', '.svelte-kit',
     // cache / temp
     '.cache', '.parcel-cache', '.turbo', 'coverage', '.nyc_output',
     '.pytest_cache', '.mypy_cache', '.ruff_cache',
     // IDE / OS
     '.vscode', '.idea',
-    // large data / static asset folders
-    'backup', 'backups', 'logs', 'log',
-    'assets', 'public', 'static', 'media',
-    // schema / context / chunk dumps (large JSON folders)
-    'schema', 'context', 'chunks', 'qdrant_storage',
-    // python env internals
-    'site-packages', 'lib', 'lib64', 'bin', 'share', 'include',
-    // misc heavy folders
-    'migrations', 'fixtures', 'seeds', 'testing',
-   
+    // python env internals (only when they are actual venv folders)
+    'site-packages', 'lib64',
+    // large data folders unlikely to contain source code
+    'backup', 'backups',
+    'qdrant_storage',
 ]);
 
 // Max file size to parse — skip huge generated files (500 KB)

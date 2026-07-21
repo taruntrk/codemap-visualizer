@@ -66,9 +66,12 @@ Built with tree-sitter for accurate parsing (no regex hacks), rendered as SVG wi
 - Helps you understand where execution starts
 
 ### 🔴 Unused File Detection
-- Files with **no connections at all** (neither imports nor imported by anything) are shown with a **red background and red border**
-- These are candidates for cleanup — dead code, forgotten files
-- Tooltip shows a ⚠️ unused badge
+- Files with **no connections at all** (neither imports nor imported by anything) are collected into a dedicated **🗑 Unused Files** section at the bottom of the graph
+- The section is **collapsed by default** — double-click to expand and browse all unused files
+- This keeps the main graph clean — only connected files are visible on load
+- The section is **draggable** — reposition it anywhere on the canvas
+- Unused files are rendered with a gray dimmed style inside the section
+- Tooltip shows a ⚠️ unused badge on each file inside
 
 ### 🖱️ Full Interaction Model
 
@@ -81,8 +84,11 @@ Built with tree-sitter for accurate parsing (no regex hacks), rendered as SVG wi
 | **Click** folder border | Isolate that folder — show all its files and their external connections |
 | **Double-click** folder | Collapse folder to header bar, edges reroute to box center |
 | **Double-click** collapsed folder | Expand folder back to full size |
+| **Double-click** CSS / ENV / DB / Unused section | Expand section to show all its nodes |
+| **Double-click** expanded section | Collapse section back to pill bar |
 | **Drag** file node | Reposition node anywhere, all connected edges follow live |
 | **Drag** folder box | Move entire folder with all its nodes, all edges (including folder-to-folder) follow live |
+| **Drag** CSS / ENV / DB / Unused section | Move the entire section anywhere on the canvas |
 | **Scroll wheel** | Zoom in/out, anchored to cursor position |
 | **Drag background** | Pan the entire canvas |
 | **Click empty area** | Deselect / reset isolation |
@@ -278,181 +284,99 @@ vsce publish
 
 ## Pending Work / TODO
 
-> Yeh section track karta hai — **abhi kya implement karna baaki hai**, aur **aage kya banana hai**.
+> This section tracks what is planned next.
 
 ---
 
-### ⏳ IMMEDIATE — Abhi implement karna hai (code ready hai, sirf paste karna hai)
+### 🔮 FUTURE — Planned Features
 
 ---
 
-#### 1. 🔁 Smart Auto-Collapse on Load
+#### 1. 🌐 Frontend ↔ Backend API Call Matching
 
-**Problem:** Jab bhi map open hota hai, saari folders expanded hoti hain — large projects mein bahut cluttered dikhta hai.
-
-**Solution — `src/webview/panel.ts` → `renderRoot()` function:**
-
-`topFolders.forEach(fp => drawFolderBox(fp));` (line ~1229) ke baad, `// 3. Folder-to-folder aggregated edges` se pehle yeh block insert karo:
-
-```js
-// 2b. Auto-collapse folders that have no connected files
-{
-  const allFoldersSorted = [...folders].sort((a, b) => {
-    const da = a.split('/').length, db = b.split('/').length;
-    return db - da; // deeper folders first
-  });
-
-  allFoldersSorted.forEach(fp => {
-    const filesUnder = getAllFilesUnder(fp);
-    const hasConnection = filesUnder.some(n => connectedIds.has(n.id));
-    if (!hasConnection) {
-      setFolderCollapsed(fp, true);
-    }
-  });
-}
-```
-
-**Variables already available:** `folders`, `getAllFilesUnder()`, `connectedIds`, `setFolderCollapsed()`
-
-**Result:** Sirf woh folders open rehte hain jinke files ke beech edges hain. Unused/disconnected folders by default collapsed.
-
----
-
-#### 2. 🔘 "Collapse All / Expand All" Toggle Button
-
-**File:** `src/webview/panel.ts` — 4 jagah changes:
-
-**CSS** (`getStyles()` → `#resetBtn:hover` ke baad):
-```css
-#collapseAllBtn {
-  margin-top: 6px;
-  margin-left: 6px;
-  background: #3c3c5a;
-  border: none;
-  color: #9cdcfe;
-  padding: 4px 12px;
-  border-radius: 5px;
-  cursor: pointer;
-  font-size: 11px;
-}
-#collapseAllBtn:hover { background: #4c4c7a; }
-```
-
-**HTML** (`getToolbar()` → `<button id="resetBtn">` ke baad):
-```html
-<button id="collapseAllBtn">&#9654; Collapse All</button>
-```
-
-**JS variable** (`getJs1()` → `const resetBtn` ke baad):
-```js
-const collapseAllBtn = document.getElementById('collapseAllBtn');
-```
-
-**Event listener** (`resetBtn.addEventListener` ke baad):
-```js
-let _allCollapsed = false;
-collapseAllBtn.addEventListener('click', () => {
-  if (viewMode !== 'root') return;
-  _allCollapsed = !_allCollapsed;
-  collapseAllBtn.textContent = _allCollapsed ? '▼ Expand All' : '▶ Collapse All';
-  folders.forEach(fp => setFolderCollapsed(fp, _allCollapsed));
-  redrawAllEdges();
-});
-```
-
-**Build command after changes:** `node esbuild.js`
-
----
-
-### 🔮 FUTURE — Aage banana hai (planned features)
-
----
-
-#### 3. 🌐 Frontend ↔ Backend API Call Matching
-
-**What:** JS/TS frontend mein `fetch('/api/users')` aur Python/Node backend mein `@app.get('/api/users')` ko automatically match karke ek edge draw karo.
+**What:** Automatically match `fetch('/api/users')` in JS/TS frontend with `@app.get('/api/users')` in Python/Node backend and draw an edge between them.
 
 **How:**
-- JS parser mein `fetch()`, `axios.get()`, `axios.post()` calls detect karo — URL extract karo
-- Python parser mein FastAPI/Flask route decorators `@app.get(...)`, `@router.post(...)` detect karo — route path extract karo
-- `graphBuilder.ts` mein dono ko match karo — ek nayi edge type `'api-call'` (pink/magenta color)
-- `panel.ts` mein is edge type ke liye alag styling (dashed pink line)
+- Detect `fetch()`, `axios.get()`, `axios.post()` in JS parser — extract URL
+- Detect FastAPI/Flask route decorators `@app.get(...)`, `@router.post(...)` in Python parser — extract route path
+- Match both in `graphBuilder.ts` — new edge type `'api-call'` (pink/magenta)
+- Style as dashed pink line in `panel.ts`
 
 **Files to change:** `jstsParser.ts`, `pythonParser.ts`, `graphBuilder.ts`, `panel.ts`
 
 ---
 
-#### 4. 🤖 AI Enrichment Layer
+#### 2. 🤖 AI Enrichment Layer
 
-**What:** Har node pe ek AI-generated summary dikhao — "ye file kya karti hai", category (auth/db/api/util etc.)
+**What:** Show an AI-generated summary on each node — "what this file does", category (auth/db/api/util etc.)
 
 **How:**
-- Extension mein Claude API / VS Code LLM API integrate karo
-- Har file ka content (ya functions list) bhejo, summary wapas lo
-- Node ke `summary` aur `category` fields fill karo (abhi `null` hain)
-- Tooltip mein summary dikhao; layout mein category-based color/grouping option
+- Integrate Claude API / VS Code LLM API in the extension
+- Send file content (or function list), receive summary
+- Fill `summary` and `category` fields on each node (currently `null`)
+- Show summary in tooltip; category-based color/grouping option in layout
 
-**Files to change:** `extension.ts` (API call), `graphBuilder.ts` (fields add), `panel.ts` (tooltip + display)
+**Files to change:** `extension.ts` (API call), `graphBuilder.ts` (add fields), `panel.ts` (tooltip + display)
 
 ---
 
-#### 5. 🔍 Search / Filter Bar
+#### 3. 🔍 Search / Filter Bar
 
-**What:** Toolbar mein ek search box — filename type karo, sirf matching nodes highlight/focus ho jaayein, baaki dim.
+**What:** A search box in the toolbar — type a filename, only matching nodes highlight/focus, rest dim.
 
 **How:**
-- `getToolbar()` mein `<input id="searchBox" placeholder="Search file...">` add karo
-- `input` event pe `nodes` array filter karo by `fileName`
-- Matching nodes bright, non-matching dim (same CSS classes jo isolation mein use hoti hain)
-- `Escape` press → search clear, full view restore
+- Add `<input id="searchBox" placeholder="Search file...">` in `getToolbar()`
+- On `input` event, filter `nodes` array by `fileName`
+- Matching nodes bright, non-matching dim (same CSS classes used in isolation)
+- `Escape` → clear search, restore full view
 
 **Files to change:** `panel.ts` only
 
 ---
 
-#### 6. 📦 Performance — Large Projects (1000+ files)
+#### 4. 📦 Performance — Large Projects (1000+ files)
 
-**What:** Very large projects pe scan slow hota hai aur SVG laggy hoti hai.
+**What:** Very large projects scan slowly and SVG becomes laggy.
 
 **Improvements planned:**
-- Scanner mein `node_modules`, `.git`, `dist`, `build`, `__pycache__` better skip karo (configurable ignore list)
-- SVG rendering mein virtualization — sirf visible viewport ke nodes render karo (off-screen nodes ka DOM element create na karo)
-- Web Worker mein graph layout compute karo taaki UI thread block na ho
+- Better skip of `node_modules`, `.git`, `dist`, `build`, `__pycache__` (configurable ignore list)
+- SVG virtualization — only render nodes in the visible viewport
+- Compute graph layout in a Web Worker so the UI thread doesn't block
 
 ---
 
-#### 7. ⚙️ Settings / Configuration
+#### 5. ⚙️ Settings / Configuration
 
-**What:** User VS Code settings se control kar sake:
-- Kaunsi file extensions scan hon
-- Kaunse folders ignore hon (custom `.codemapignore` file support)
+**What:** Let users control via VS Code settings:
+- Which file extensions to scan
+- Which folders to ignore (custom `.codemapignore` file support)
 - Max file count limit
 - Default zoom level
-- Auto-collapse on/off toggle (instead of always-on)
+- Auto-collapse on/off toggle
 
 **Files to change:** `package.json` (contributes.configuration), `extension.ts` (read settings), `scanner.ts` (apply filters)
 
 ---
 
-#### 8. 🗺️ Minimap
+#### 6. 🗺️ Minimap
 
-**What:** Canvas ke corner mein ek chhota overview minimap — pura graph chhota dikhao, aur current viewport ka rectangle dikhao. Click/drag on minimap → jump to that area.
+**What:** A small overview minimap in the corner of the canvas — shows the full graph scaled down with a viewport rectangle. Click/drag on minimap → jump to that area.
 
-**How:** Second smaller SVG element, same graph data se scaled-down render, viewport rect overlay.
+**How:** Second smaller SVG element, scaled-down render of same graph data, viewport rect overlay.
 
 **Files to change:** `panel.ts` only
 
 ---
 
-#### 9. 📸 Export Graph as Image / JSON
+#### 7. 📸 Export Graph as Image / JSON
 
 **What:**
-- **PNG/SVG export** — toolbar button → current graph SVG ko file mein save karo
-- **JSON export** — raw graph JSON (`nodes[]` + `edges[]`) download karo for external tools
+- **PNG/SVG export** — toolbar button → save current graph SVG to file
+- **JSON export** — download raw graph JSON (`nodes[]` + `edges[]`) for external tools
 
 **How:**
 - SVG serialization → `Blob` → download link
-- `vscode.postMessage` → extension side pe file write
+- `vscode.postMessage` → extension writes file
 
 **Files to change:** `panel.ts`, `extension.ts`
 
@@ -468,6 +392,15 @@ collapseAllBtn.addEventListener('click', () => {
 
 ## Release Notes
 
+### 0.0.2
+- **Unused Files section** — collapsed pill bar by default at bottom of graph, double-click to expand; unused nodes no longer rendered in folder boxes
+- **CSS / Styles, Environment, Database sections** — now collapsed by default as pill bars; double-click to expand/collapse
+- **Draggable sections** — CSS, ENV, DB, and Unused Files sections can be dragged anywhere on the canvas
+- **No overlap between sections** — pill width is now calculated from label text length so sections never overlap each other
+- **Sections on separate rows** — CSS/ENV/DB on first row, Unused Files on its own row below
+- **fitView fix** — initial zoom/pan now fits only connected code nodes; large unused file counts no longer cause extreme zoom-out with graph in top-left corner
+- **Double-click expand fix** — `pointer-events: all` on section rects ensures double-click works reliably on transparent backgrounds
+
 ### 0.0.1
 - Initial release
 - JS/TS/Python scanning with tree-sitter (WASM, no native bindings)
@@ -479,7 +412,7 @@ collapseAllBtn.addEventListener('click', () => {
 - 20+ DB client detections for usage badge (mongoose, prisma, sqlalchemy, etc.)
 - Isolate on click for nodes, edges, and folders
 - Ctrl+Click opens file in VS Code beside current editor
-- Entry point gold border, unused files red
+- Entry point gold border, unused files collected in dedicated section
 - Tooltip on hover for all element types
 - Reset View button
 - **Drilldown folder mode** — right-click any folder in Explorer → "Generate CodeMap for this Folder" → scoped 2-step picker for that folder only
