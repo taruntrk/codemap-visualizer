@@ -96,6 +96,17 @@ Built with tree-sitter for accurate parsing (no regex hacks), rendered as SVG wi
 - **ENV node hover** → total keys, DB keys list, API/Secret keys list (values always hidden)
 - **DB node hover** → table names (SQL), model names (Prisma/ORM)
 
+### 🔍 Drilldown Folder Mode
+
+- **Right-click any folder** in the VS Code Explorer sidebar → select **"Generate CodeMap for this Folder"**
+- The map is scoped **only to that folder** — perfect for large monorepos where you want to focus on one app or module
+- Same 2-step folder picker as the full project command, but anchored to the selected folder as root
+- **Step 1** — pick which top-level subfolders inside the selected folder to include
+- **Step 2** — for each picked subfolder that has further subfolders, choose specific subfolders, "📄 root files only", or "✅ Select ALL" recursively
+- If a subfolder has no further subfolders → included directly, Step 2 is skipped for it
+- Dismissing Step 2 → the entire folder is included
+- Implemented via `codemap-visualizer.generateForFolder` command registered in `extension.ts`, wired to the `explorer/context` menu in `package.json`
+
 ---
 
 ## Supported Languages
@@ -114,11 +125,33 @@ Built with tree-sitter for accurate parsing (no regex hacks), rendered as SVG wi
 
 ## How to Use
 
+### Option 1 — Command Palette (full project)
+
 1. Open any project folder in VS Code
 2. Press `Ctrl+Shift+P`
 3. Type **`Generate Codebase Map`** → press Enter
-4. Wait a moment while your project is scanned
-5. The interactive map opens in a webview panel beside your editor
+4. **Step 1 of 2:** A folder picker appears — select one or more top-level folders to explore (multi-select supported)
+5. **Step 2 of 2:** For each selected folder that has subfolders, a second picker appears — choose specific subfolders, root files only, or "Select ALL"
+6. The interactive map opens in a webview panel beside your editor
+
+### Option 2 — Right-click any folder (drilldown mode)
+
+1. Right-click **any folder** in the VS Code Explorer sidebar
+2. Select **"Generate CodeMap for this Folder"**
+3. Same 2-step folder picker appears, scoped to the folder you right-clicked
+4. Useful for large monorepos — drill into a specific app or module without scanning everything
+
+### 2-Step Folder Picker — How it works
+
+| Step | What you see | What you pick |
+|---|---|---|
+| **Step 1** | All top-level folders + root files | One or more folders to include |
+| **Step 2** | Subfolders inside each selected folder | Specific subfolders, "root files only", or "✅ Select ALL" |
+
+- If a folder has **no subfolders** → it's added directly, Step 2 is skipped for it
+- Dismissing Step 2 → the **entire folder** is included
+- Picking **"✅ Select ALL"** → entire folder included recursively
+- Picking **"📄 root files"** → only files directly in that folder (no subdirectory recursion)
 
 ---
 
@@ -449,3 +482,5 @@ collapseAllBtn.addEventListener('click', () => {
 - Entry point gold border, unused files red
 - Tooltip on hover for all element types
 - Reset View button
+- **Drilldown folder mode** — right-click any folder in Explorer → "Generate CodeMap for this Folder" → scoped 2-step picker for that folder only
+- **2-step folder picker** — Step 1: pick top-level folders; Step 2: pick specific subfolders, root files only, or select all recursively

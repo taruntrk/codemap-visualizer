@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
 import { walkFolder, filterCodeFiles, filterCssFiles, filterEnvFiles, filterDbFiles } from './scanner/scanner';
 import { parsePythonFile } from './parsers/pythonParser';
 import { parseJsTsFile } from './parsers/jstsParser';
@@ -8,78 +10,291 @@ import { parseDbFile } from './parsers/dbParser';
 import { buildGraph, buildGraphWithSpecial, FileParseResult } from './scanner/graphBuilder';
 import { CodeMapPanel } from './webview/panel';
 
+// ── Parse a single code file ──────────────────────────────
+async function parseFile(
+    filePath: string,
+    rootPath: string,
+    extensionPath: string
+): Promise<FileParseResult> {
+    const ext = path.extname(filePath).toLowerCase();
+    if (ext === '.py') return parsePythonFile(filePath, rootPath, extensionPath);
+    return parseJsTsFile(filePath, rootPath, extensionPath);
+}
+
+// ── Get immediate subfolders of a directory ───────────────
+function getSubFolders(dirPath: string): string[] {
+    try {
+        return fs.readdirSync(dirPath, { withFileTypes: true })
+            .filter(e => e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules' && e.name !== '__pycache__' && e.name !== '.git')
+            .map(e => e.name)
+            .sort();
+    } catch {
+        return [];
+    }
+}
+
+// ── Check if a directory has any code files directly inside it ───
+function getRootCodeFileCount(dirPath: string): number {
+    try {
+        return fs.readdirSync(dirPath, { withFileTypes: true })
+            .filter(e => e.isFile() && ['.py', '.js', '.jsx', '.ts', '.tsx'].includes(path.extname(e.name).toLowerCase()))
+            .length;
+    } catch {
+        return 0;
+    }
+}
+
+// ── Scan selected paths and build + show graph ────────────
+async function buildAndShowGraph(
+    scanPaths: string[],   // absolute paths to scan (dirs or __ROOT_FILES__ tokens)
+    rootPath: string,
+    projectName: string,
+    extensionPath: string
+) {
+    // Resolve __ROOT_FILES__ tokens (only immediate files in that dir)
+    const allFiles: string[] = [];
+
+    for (const p of scanPaths) {
+        if (p.endsWith('/__ROOT_FILES__')) {
+            const dir = p.replace('/__ROOT_FILES__', '');
+            try {
+                fs.readdirSync(dir, { withFileTypes: true })
+                    .filter(e => e.isFile())
+                    .forEach(e => allFiles.push(path.join(dir, e.name)));
+            } catch { /* skip */ }
+        } else {
+            allFiles.push(...walkFolder(p));
+        }
+    }
+
+    const uniqueFiles = [...new Set(allFiles)];
+    const codeFiles   = filterCodeFiles(uniqueFiles);
+
+    if (codeFiles.length === 0) {
+        vscode.window.showWarningMessage('No code files found in selected folders!');
+        return;
+    }
+
+    vscode.window.showInformationMessage(`Scanning ${codeFiles.length} code files...`);
+
+    const cssFiles = filterCssFiles(uniqueFiles);
+    const envFiles = filterEnvFiles(uniqueFiles);
+    const dbFiles  = filterDbFiles(uniqueFiles);
+
+    const codeResults: FileParseResult[] = [];
+    for (const f of codeFiles) {
+        codeResults.push(await parseFile(f, rootPath, extensionPath));
+    }
+
+    const cssResults = cssFiles.map(f => parseCssFile(f, rootPath));
+    const envResults = envFiles.map(f => parseEnvFile(f, rootPath));
+    const dbResults  = dbFiles.map(f => parseDbFile(f, rootPath));
+
+    const baseGraph = buildGraph(projectName, codeResults);
+    const fullGraph = buildGraphWithSpecial(baseGraph, cssResults, envResults, dbResults);
+
+    const importEdges = fullGraph.edges.filter(e => e.type === 'import').length;
+    const callEdges   = fullGraph.edges.filter(e => e.type === 'call').length;
+
+    vscode.window.showInformationMessage(
+        `Done! ${fullGraph.nodes.length} nodes, ${importEdges} imports, ${callEdges} calls.`
+    );
+
+    CodeMapPanel.createOrShow(fullGraph, rootPath);
+}
+
+// ── 2-level folder picker ─────────────────────────────────
+//
+//  Step 1: Show all top-level folders of rootPath
+//          User picks one or more (canPickMany: true)
+//
+//  Step 2: For EACH folder picked in Step 1:
+//            - If it has no subfolders → include it directly
+//            - If it has subfolders    → show them, user picks specific ones
+//              (includes "✅ Select ALL" and "📄 root files" options)
+//
+async function pickFoldersAndGenerate(
+    rootPath: string,
+    projectName: string,
+    extensionPath: string
+) {
+    // ══ STEP 1 ════════════════════════════════════════════
+    const topSubFolders  = getSubFolders(rootPath);
+    const rootFileCount  = getRootCodeFileCount(rootPath);
+
+    const step1Items: vscode.QuickPickItem[] = [];
+
+    if (rootFileCount > 0) {
+        step1Items.push({
+            label:       '📄 (root files)',
+            description: `${rootFileCount} code file(s) directly in root`,
+            picked:      false,
+        });
+    }
+
+    for (const folder of topSubFolders) {
+        step1Items.push({
+            label:       '📁 ' + folder,
+            description: path.join(rootPath, folder),
+            picked:      false,
+        });
+    }
+
+    if (step1Items.length === 0) {
+        vscode.window.showErrorMessage('No folders or code files found in this project!');
+        return;
+    }
+
+    const step1Picked = await vscode.window.showQuickPick(step1Items, {
+        canPickMany:  true,
+        placeHolder:  'Step 1 of 2 — Select top-level folders to explore (multi-select OK)',
+        title:        `CodeMap: ${projectName} — Choose Folders`,
+        ignoreFocusOut: true,
+    });
+
+    if (!step1Picked || step1Picked.length === 0) {
+        vscode.window.showInformationMessage('CodeMap: Cancelled.');
+        return;
+    }
+
+    // ══ STEP 2 ════════════════════════════════════════════
+    const finalScanPaths: string[] = [];
+
+    for (const item of step1Picked) {
+
+        // ── root-level files ──────────────────────────────
+        if (item.label === '📄 (root files)') {
+            finalScanPaths.push(rootPath + '/__ROOT_FILES__');
+            continue;
+        }
+
+        const folderName = item.label.replace('📁 ', '');
+        const folderPath = path.join(rootPath, folderName);
+        const subFolders = getSubFolders(folderPath);
+
+        // ── no subfolders → add whole folder directly ─────
+        if (subFolders.length === 0) {
+            finalScanPaths.push(folderPath);
+            continue;
+        }
+
+        // ── has subfolders → show step 2 picker ───────────
+        const folderRootFileCount = getRootCodeFileCount(folderPath);
+        const step2Items: vscode.QuickPickItem[] = [];
+
+        // "Select ALL" shortcut at top
+        step2Items.push({
+            label:       '✅ Select ALL  (entire ' + folderName + ')',
+            description: 'Scan everything inside this folder recursively',
+            picked:      false,
+        });
+
+        // root-level files inside this folder
+        if (folderRootFileCount > 0) {
+            step2Items.push({
+                label:       '📄 (root files in ' + folderName + ')',
+                description: `${folderRootFileCount} file(s) directly in ${folderName}/`,
+                picked:      false,
+            });
+        }
+
+        // each subfolder
+        for (const sub of subFolders) {
+            step2Items.push({
+                label:       '  📁 ' + sub,
+                description: path.join(folderPath, sub),
+                picked:      false,
+            });
+        }
+
+        const step2Picked = await vscode.window.showQuickPick(step2Items, {
+            canPickMany:  true,
+            placeHolder:  `Step 2 of 2 — Which parts of "${folderName}" to include?`,
+            title:        `CodeMap: ${folderName} — Select Subfolders`,
+            ignoreFocusOut: true,
+        });
+
+        // User dismissed step 2 → include whole folder
+        if (!step2Picked || step2Picked.length === 0) {
+            finalScanPaths.push(folderPath);
+            continue;
+        }
+
+        // "✅ Select ALL" was chosen → include whole folder
+        if (step2Picked.some(p => p.label.startsWith('✅'))) {
+            finalScanPaths.push(folderPath);
+            continue;
+        }
+
+        // Add specific selections
+        for (const s2 of step2Picked) {
+            if (s2.label.startsWith('📄')) {
+                // root files of this folder
+                finalScanPaths.push(folderPath + '/__ROOT_FILES__');
+            } else {
+                // specific subfolder
+                const subName = s2.label.trim().replace('📁 ', '');
+                finalScanPaths.push(path.join(folderPath, subName));
+            }
+        }
+    }
+
+    if (finalScanPaths.length === 0) {
+        vscode.window.showInformationMessage('CodeMap: Nothing selected.');
+        return;
+    }
+
+    await buildAndShowGraph(finalScanPaths, rootPath, projectName, extensionPath);
+}
+
+// ── Extension activate ────────────────────────────────────
 export function activate(context: vscode.ExtensionContext) {
     console.log('CodeMap Visualizer is now active!');
 
-    const disposable = vscode.commands.registerCommand('codemap-visualizer.helloWorld', () => {
-        vscode.window.showInformationMessage('Hello World from codemap-visualizer!');
-    });
-
-    const generateMapCommand = vscode.commands.registerCommand('codemap-visualizer.generate', async () => {
-        const workspaceFolders = vscode.workspace.workspaceFolders;
-        if (!workspaceFolders) {
-            vscode.window.showErrorMessage('Please open a folder first!');
-            return;
+    // Command 1: Ctrl+Shift+P → "Generate Codebase Map"
+    const generateMapCommand = vscode.commands.registerCommand(
+        'codemap-visualizer.generate',
+        async () => {
+            const workspaceFolders = vscode.workspace.workspaceFolders;
+            if (!workspaceFolders) {
+                vscode.window.showErrorMessage('Please open a folder first!');
+                return;
+            }
+            const rootPath = workspaceFolders[0].uri.fsPath;
+            await pickFoldersAndGenerate(
+                rootPath,
+                workspaceFolders[0].name,
+                context.extensionPath
+            );
         }
+    );
 
-        const rootPath      = workspaceFolders[0].uri.fsPath;
-        const extensionPath = context.extensionPath;
-        const allFiles      = walkFolder(rootPath);
+    // Command 2: Right-click folder in Explorer → "Generate CodeMap for this folder"
+    const generateForFolderCommand = vscode.commands.registerCommand(
+        'codemap-visualizer.generateForFolder',
+        async (uri: vscode.Uri) => {
+            let folderPath: string;
 
-        // ── Code files ──────────────────────────────────────
-        const codeFiles   = filterCodeFiles(allFiles);
-        const pythonFiles = codeFiles.filter(f => f.endsWith('.py'));
-        const jsFiles     = codeFiles.filter(f => f.endsWith('.js') || f.endsWith('.jsx'));
-        const tsFiles     = codeFiles.filter(f => f.endsWith('.ts') || f.endsWith('.tsx'));
+            if (uri && uri.fsPath) {
+                folderPath = uri.fsPath;
+            } else {
+                const picked = await vscode.window.showOpenDialog({
+                    canSelectFolders: true,
+                    canSelectFiles:   false,
+                    canSelectMany:    false,
+                    openLabel:        'Generate CodeMap for this folder',
+                });
+                if (!picked || picked.length === 0) { return; }
+                folderPath = picked[0].fsPath;
+            }
 
-        // ── Special files ────────────────────────────────────
-        const cssFiles = filterCssFiles(allFiles);
-        const envFiles = filterEnvFiles(allFiles);
-        const dbFiles  = filterDbFiles(allFiles);
-
-        vscode.window.showInformationMessage(
-            `Scanning: ${pythonFiles.length} py, ${jsFiles.length} js, ${tsFiles.length} ts, ` +
-            `${cssFiles.length} css, ${envFiles.length} env, ${dbFiles.length} db/schema files...`
-        );
-
-        // ── Parse code files ─────────────────────────────────
-        const codeResults: FileParseResult[] = [];
-
-        for (const f of pythonFiles) {
-            codeResults.push(await parsePythonFile(f, rootPath, extensionPath));
+            const folderName = path.basename(folderPath);
+            await pickFoldersAndGenerate(folderPath, folderName, context.extensionPath);
         }
-        for (const f of jsFiles) {
-            codeResults.push(await parseJsTsFile(f, rootPath, extensionPath));
-        }
-        for (const f of tsFiles) {
-            codeResults.push(await parseJsTsFile(f, rootPath, extensionPath));
-        }
+    );
 
-        // ── Parse special files ──────────────────────────────
-        const cssResults = cssFiles.map(f => parseCssFile(f, rootPath));
-        const envResults = envFiles.map(f => parseEnvFile(f, rootPath));
-        const dbResults  = dbFiles.map(f => parseDbFile(f, rootPath));
-
-        // ── Build graph ──────────────────────────────────────
-        const baseGraph  = buildGraph(workspaceFolders[0].name, codeResults);
-        const fullGraph  = buildGraphWithSpecial(baseGraph, cssResults, envResults, dbResults);
-
-        // ── Stats ────────────────────────────────────────────
-        const totalFunctions = codeResults.reduce((s, r) => s + r.functions.length, 0);
-        const importEdges    = fullGraph.edges.filter(e => e.type === 'import').length;
-        const callEdges      = fullGraph.edges.filter(e => e.type === 'call').length;
-
-        vscode.window.showInformationMessage(
-            `Done! ${fullGraph.nodes.length} nodes (${codeResults.length} code, ${cssResults.length} css, ` +
-            `${envResults.length} env, ${dbResults.length} db). ` +
-            `${totalFunctions} functions, ${importEdges} imports, ${callEdges} calls.`
-        );
-
-        CodeMapPanel.createOrShow(fullGraph, rootPath);
-    });
-
-    context.subscriptions.push(disposable);
     context.subscriptions.push(generateMapCommand);
+    context.subscriptions.push(generateForFolderCommand);
 }
 
 export function deactivate() {}

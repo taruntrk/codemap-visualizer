@@ -19,8 +19,7 @@ const IGNORE_DIRS = new Set([
     'site-packages', 'lib', 'lib64', 'bin', 'share', 'include',
     // misc heavy folders
     'migrations', 'fixtures', 'seeds', 'testing',
-    // third-party framework apps (frappe bench)
-    'apps', 'frappe', 'erpnext', 'iitdata',
+   
 ]);
 
 // Max file size to parse — skip huge generated files (500 KB)

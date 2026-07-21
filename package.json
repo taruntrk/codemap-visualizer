@@ -29,8 +29,21 @@
       {
         "command": "codemap-visualizer.generate",
         "title": "Generate Codebase Map"
+      },
+      {
+        "command": "codemap-visualizer.generateForFolder",
+        "title": "Generate CodeMap for this Folder"
       }
-    ]
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "codemap-visualizer.generateForFolder",
+          "when": "explorerResourceIsFolder",
+          "group": "navigation"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run package",

@@ -538,10 +538,16 @@ const folderBottoms = topFolders.map(fp => fboxes[fp] ? fboxes[fp].y + fboxes[fp
 const gridBottom = folderBottoms.length ? Math.max(...folderBottoms) : H / 2;
 const specialY   = gridBottom + 90;
 
-const SPECIAL_COL_GAP = 30;
+const SPECIAL_COL_GAP = 40;
 const SPECIAL_NODE_H  = 28;
 const SPECIAL_NODE_W  = 160;
 const SPECIAL_PAD     = 14;
+
+// Estimate collapsed pill width (mirrors drawSpecialSection COLLAPSED_W formula)
+function collapsedPillW(icon, label, count) {
+  const txt = '▶ ' + icon + ' ' + label + (count > 0 ? ' (' + count + ')' : '') + '  — double-click to expand';
+  return Math.max(txt.length * 7 + 20, 180);
+}
 
 function layoutSpecialGroup(snodes, startX, y) {
   if (!snodes.length) return { x: startX, y, w: 0, h: 0, endX: startX };
@@ -557,28 +563,44 @@ function layoutSpecialGroup(snodes, startX, y) {
 
 let sx = FGAP_X;
 const cssBox = layoutSpecialGroup(cssNodes, sx, specialY);  cssBox.color = '#c586c0';
-sx = cssBox.endX + (cssBox.w ? SPECIAL_COL_GAP : 0);
-const envBox = layoutSpecialGroup(envNodes, sx, specialY);  envBox.color = '#dcdcaa';
-sx = envBox.endX + (envBox.w ? SPECIAL_COL_GAP : 0);
-const dbBox  = layoutSpecialGroup(dbNodes,  sx, specialY);  dbBox.color  = '#4ec9b0';
-sx = dbBox.endX + (dbBox.w ? SPECIAL_COL_GAP : 0);
+// Step by whichever is wider: content box or collapsed pill — so they never overlap
+const cssStep = cssBox.w ? Math.max(cssBox.w, collapsedPillW('🎨', 'CSS / Styles', cssNodes.length)) : 0;
+sx = FGAP_X + cssStep + (cssStep ? SPECIAL_COL_GAP : 0);
 
-// ── Unused Files box — gray, wider to fit file names ──────
+const envBox = layoutSpecialGroup(envNodes, sx, specialY);  envBox.color = '#dcdcaa';
+const envStep = envBox.w ? Math.max(envBox.w, collapsedPillW('🔑', 'Environment', envNodes.length)) : 0;
+sx += envStep + (envStep ? SPECIAL_COL_GAP : 0);
+
+const dbBox  = layoutSpecialGroup(dbNodes,  sx, specialY);  dbBox.color  = '#4ec9b0';
+
+// ── Unused Files box — gray, multi-column grid layout ──────
 function layoutUnusedGroup(unodes, startX, y) {
   if (!unodes.length) return { x: startX, y, w: 0, h: 0, endX: startX };
   // normalise folderPath for unused nodes too
   unodes.forEach(n => { if (!n.folderPath) n.folderPath = ROOT_FP; });
   const maxW = Math.max(...unodes.map(n => n.fileName.length * 7 + 20), SPECIAL_NODE_W);
-  const bw = maxW + SPECIAL_PAD * 2;
-  const bh = unodes.length * (SPECIAL_NODE_H + 6) + SPECIAL_PAD * 2 + 20;
+  const colW = maxW + 12;  // width of each column cell
+
+  // Max 4 columns, but don't exceed number of nodes
+  const COLS = Math.min(4, unodes.length);
+  const ROWS = Math.ceil(unodes.length / COLS);
+
+  const bw = COLS * colW + (COLS - 1) * 8 + SPECIAL_PAD * 2;
+  const bh = ROWS * (SPECIAL_NODE_H + 6) + SPECIAL_PAD * 2 + 20;
+
   unodes.forEach((n, i) => {
-    n.x = startX + SPECIAL_PAD;
-    n.y = y + 20 + SPECIAL_PAD + i * (SPECIAL_NODE_H + 6);
+    const col = i % COLS;
+    const row = Math.floor(i / COLS);
+    n.x = startX + SPECIAL_PAD + col * (colW + 8);
+    n.y = y + 20 + SPECIAL_PAD + row * (SPECIAL_NODE_H + 6);
     n.rootX = n.x; n.rootY = n.y;
   });
   return { x: startX, y, w: bw, h: bh, endX: startX + bw };
 }
-const unusedBox = layoutUnusedGroup(unusedCodeNodes, sx, specialY);
+
+// Unused Files always on its own row, below CSS/ENV/DB sections
+const unusedY = specialY + 60;
+const unusedBox = layoutUnusedGroup(unusedCodeNodes, FGAP_X, unusedY);
 unusedBox.color = '#6e6e6e';
 
 // ── folder-to-folder connection map (for root view f2f edges) ─
@@ -607,6 +629,7 @@ function getJs2(): string {
 const folderEls  = {};   // fp -> { box, label, chevron, g }
 const edgeEls    = [];   // { el, data, isF2F, sf?, tf? }
 const nodeGroups = [];   // { el, data }
+const specialSectionRegistry = {};  // label -> { nodeEls, onNodeDrawn }
 let   summaryEls = [];   // external folder summary boxes in folder-view
 
 // ── helpers ───────────────────────────────────────────
@@ -1393,17 +1416,16 @@ function renderRoot() {
   nodes.forEach(n => drawFileNode(n));
 
   // 6. Special section boxes + nodes
-  drawSpecialSection(cssBox, 'CSS / Styles', '🎨');
-  drawSpecialSection(envBox, 'Environment',  '🔑');
-  drawSpecialSection(dbBox,  'Database',     '🗄\uFE0F');
+  drawSpecialSection(cssBox, 'CSS / Styles', '🎨', cssNodes);
+  drawSpecialSection(envBox, 'Environment',  '🔑', envNodes);
+  drawSpecialSection(dbBox,  'Database',     '🗄\uFE0F', dbNodes);
   nodes.forEach(n => {
     if (n.nodeType === 'css' || n.nodeType === 'env' || n.nodeType === 'database')
       drawSpecialNode(n);
   });
 
-  // 7. Unused files — gray virtual box at the bottom
-  drawSpecialSection(unusedBox, 'Unused Files', '🗑\uFE0F');
-  unusedCodeNodes.forEach(n => drawFileNode(n));
+  // 7. Unused files — gray virtual box at the bottom, collapsed by default
+  drawUnusedSection(unusedBox, unusedCodeNodes);
 
   // 7. Wire up interactions
   wireRootInteractions();
@@ -1411,11 +1433,12 @@ function renderRoot() {
 }
 
 // ── draw a single file node ───────────────────────────
-function drawFileNode(n) {
+function drawFileNode(n, forceUnused = false) {
   const isSpecial = n.nodeType === 'css' || n.nodeType === 'env' || n.nodeType === 'database';
   if (isSpecial) return;
   const isUnused = unusedIds.has(n.id);
-  const col      = isUnused ? '#6e6e6e' : folderColor(n.folderPath || '(root)');
+  if (isUnused && !forceUnused) return;  // unused nodes rendered only inside drawUnusedSection
+  const col = isUnused ? '#6e6e6e' : folderColor(n.folderPath || '(root)');
   const isEntry  = entryIds.has(n.id);
   const nw = nodeW(n), nh = nodeH();
 
@@ -1477,6 +1500,7 @@ function drawFileNode(n) {
     // parent folder box tightly re-wraps around moved file
     if (n.folderPath) resizeParentBox(n.folderPath);
   });
+  return g;
 }
 
 function refreshEdges(nodeId) {
@@ -1507,25 +1531,202 @@ function refreshEdges(nodeId) {
   });
 }
 
-// ── special section box ───────────────────────────────
-function drawSpecialSection(box, label, icon) {
+// ── special section box — collapsible, collapsed by default ──
+function drawSpecialSection(box, label, icon, sectionNodes) {
   if (!box.w) return;
-  const g = mkEl('g', {});
+
+  const COLLAPSED_H = 28;
+  let isCollapsed = true;
+  const nodeEls = [];
+
+  const count = sectionNodes ? sectionNodes.length : 0;
+  const countStr = count > 0 ? ' (' + count + ')' : '';
+  const collapsedLabel = '▶ ' + icon + ' ' + label + countStr + '  — double-click to expand';
+  const expandedLabel  = '▼ ' + icon + ' ' + label + countStr + '  — double-click to collapse';
+
+  // Collapsed width: just enough for the label text; expanded: full content width
+  const COLLAPSED_W = Math.max(collapsedLabel.length * 7 + 20, 180);
+  const EXPANDED_W  = Math.max(box.w, COLLAPSED_W);
+
+  const g = mkEl('g', { style: 'cursor:pointer' });
+
   const rect = mkEl('rect', {
-    x:box.x, y:box.y, width:box.w, height:box.h, rx:12, ry:12,
-    fill:box.color, 'fill-opacity':'0.06',
-    stroke:box.color, 'stroke-width':'1.5', opacity:'0.7'
+    x: box.x, y: box.y, width: COLLAPSED_W, height: COLLAPSED_H, rx: 12, ry: 12,
+    fill: box.color, 'fill-opacity': '0.15',
+    stroke: box.color, 'stroke-width': '1.5', opacity: '0.9',
+    'pointer-events': 'all', style: 'cursor:pointer'
   });
   rect.classList.add('folder-box');
+
   const lbl = mkEl('text', {
-    x:box.x+10, y:box.y+15,
-    fill:box.color, 'font-size':'11', 'font-weight':'700', opacity:'0.8'
+    x: box.x + 10, y: box.y + 18,
+    fill: box.color, 'font-size': '11', 'font-weight': '700', opacity: '0.9',
+    style: 'cursor:pointer; pointer-events:all'
   });
-  lbl.textContent = icon+' '+label;
+  lbl.textContent = collapsedLabel;
   lbl.classList.add('folder-label');
-  g.appendChild(rect); g.appendChild(lbl);
+
+  g.appendChild(rect);
+  g.appendChild(lbl);
   vp.appendChild(g);
-  folderEls['__special__'+label] = { box:rect, label:lbl, g };
+
+  const sectionKey = '__special__' + label;
+  specialSectionRegistry[sectionKey] = {
+    nodeEls,
+    onNodeDrawn(el) { el.setAttribute('display', 'none'); nodeEls.push(el); }
+  };
+
+  function toggleCollapse(e) {
+    e.stopPropagation();
+    isCollapsed = !isCollapsed;
+    if (isCollapsed) {
+      rect.setAttribute('width', COLLAPSED_W);
+      rect.setAttribute('height', COLLAPSED_H);
+      lbl.textContent = collapsedLabel;
+      nodeEls.forEach(el => { el.setAttribute('display', 'none'); });
+    } else {
+      rect.setAttribute('width', EXPANDED_W);
+      rect.setAttribute('height', box.h);
+      lbl.textContent = expandedLabel;
+      nodeEls.forEach(el => { el.removeAttribute('display'); });
+    }
+  }
+
+  g.addEventListener('dblclick', toggleCollapse);
+
+  // ── drag to reposition ──
+  let sDragging = false, sDx = 0, sDy = 0, sBx = box.x, sBy = box.y;
+  g.addEventListener('mousedown', ev => {
+    if (ev.detail >= 2) return; // let dblclick fire normally
+    sDragging = true;
+    sDx = ev.clientX; sDy = ev.clientY;
+    sBx = box.x; sBy = box.y;
+    ev.stopPropagation();
+  });
+  window.addEventListener('mousemove', ev => {
+    if (!sDragging) return;
+    const dx = (ev.clientX - sDx) / viewScale;
+    const dy = (ev.clientY - sDy) / viewScale;
+    box.x = sBx + dx; box.y = sBy + dy;
+    // move the rect + label
+    rect.setAttribute('x', box.x);
+    rect.setAttribute('y', box.y);
+    lbl.setAttribute('x', box.x + 10);
+    lbl.setAttribute('y', box.y + 18);
+    // move child nodes
+    nodeEls.forEach((el, i) => {
+      const n = sectionNodes[i];
+      if (!n) return;
+      n.x = box.x + SPECIAL_PAD;
+      n.y = box.y + 20 + SPECIAL_PAD + i * (SPECIAL_NODE_H + 6);
+      el.setAttribute('transform', 'translate(' + n.x + ',' + n.y + ')');
+    });
+    redrawAllEdgesLive();
+  });
+  window.addEventListener('mouseup', () => { sDragging = false; });
+
+  folderEls[sectionKey] = { box: rect, label: lbl, g };
+}
+
+// ── Unused Files section — collapsed by default, lazy render on expand ──
+function drawUnusedSection(box, unodes) {
+  if (!box.w || !unodes.length) return;
+
+  const COLLAPSED_H = 28;
+  let isCollapsed = true;
+  let rendered = false;
+
+  const collapsedLabel = '▶ 🗑 Unused Files (' + unodes.length + ')  — double-click to expand';
+  const expandedLabel  = '▼ 🗑 Unused Files (' + unodes.length + ')  — double-click to collapse';
+  const COLLAPSED_W = Math.max(collapsedLabel.length * 7 + 20, 220);
+  const EXPANDED_W  = Math.max(box.w, COLLAPSED_W);
+
+  const g = mkEl('g', { style: 'cursor:pointer' });
+
+  const rect = mkEl('rect', {
+    x: box.x, y: box.y, width: COLLAPSED_W, height: COLLAPSED_H, rx: 12, ry: 12,
+    fill: box.color, 'fill-opacity': '0.15',
+    stroke: box.color, 'stroke-width': '1.5', opacity: '0.9',
+    'pointer-events': 'all', style: 'cursor:pointer'
+  });
+  rect.classList.add('folder-box');
+
+  const lbl = mkEl('text', {
+    x: box.x + 10, y: box.y + 18,
+    fill: box.color, 'font-size': '11', 'font-weight': '700', opacity: '0.9',
+    style: 'cursor:pointer; pointer-events:all'
+  });
+  lbl.textContent = collapsedLabel;
+  lbl.classList.add('folder-label');
+
+  g.appendChild(rect);
+  g.appendChild(lbl);
+  vp.appendChild(g);
+
+  const unusedNodeEls = [];
+
+  function toggleUnused(e) {
+    e.stopPropagation();
+    isCollapsed = !isCollapsed;
+    if (isCollapsed) {
+      rect.setAttribute('width', COLLAPSED_W);
+      rect.setAttribute('height', COLLAPSED_H);
+      lbl.textContent = collapsedLabel;
+      unusedNodeEls.forEach(el => { el.setAttribute('display', 'none'); });
+    } else {
+      rect.setAttribute('width', EXPANDED_W);
+      rect.setAttribute('height', box.h);
+      lbl.textContent = expandedLabel;
+      if (!rendered) {
+        rendered = true;
+        unodes.forEach(n => {
+          const ng = drawFileNode(n, true);
+          if (ng) unusedNodeEls.push(ng);
+        });
+      } else {
+        unusedNodeEls.forEach(el => { el.removeAttribute('display'); });
+      }
+    }
+  }
+
+  g.addEventListener('dblclick', toggleUnused);
+
+  // ── drag to reposition ──
+  let uDragging = false, uDx = 0, uDy = 0, uBx = box.x, uBy = box.y;
+  g.addEventListener('mousedown', ev => {
+    if (ev.detail >= 2) return;
+    uDragging = true;
+    uDx = ev.clientX; uDy = ev.clientY;
+    uBx = box.x; uBy = box.y;
+    ev.stopPropagation();
+  });
+  window.addEventListener('mousemove', ev => {
+    if (!uDragging) return;
+    const dx = (ev.clientX - uDx) / viewScale;
+    const dy = (ev.clientY - uDy) / viewScale;
+    box.x = uBx + dx; box.y = uBy + dy;
+    rect.setAttribute('x', box.x);
+    rect.setAttribute('y', box.y);
+    lbl.setAttribute('x', box.x + 10);
+    lbl.setAttribute('y', box.y + 18);
+    // reposition rendered child nodes
+    unusedNodeEls.forEach((el, i) => {
+      const n = unodes[i];
+      if (!n) return;
+      const COLS = Math.min(4, unodes.length);
+      const maxW = Math.max(...unodes.map(u => u.fileName.length * 7 + 20), SPECIAL_NODE_W);
+      const colW = maxW + 12;
+      const col  = i % COLS;
+      const row  = Math.floor(i / COLS);
+      n.x = box.x + SPECIAL_PAD + col * (colW + 8);
+      n.y = box.y + 20 + SPECIAL_PAD + row * (SPECIAL_NODE_H + 6);
+      el.setAttribute('transform', 'translate(' + n.x + ',' + n.y + ')');
+    });
+    redrawAllEdgesLive();
+  });
+  window.addEventListener('mouseup', () => { uDragging = false; });
+
+  folderEls['__special__Unused Files'] = { box: rect, label: lbl, g };
 }
 
 // ── special node ──────────────────────────────────────
@@ -1552,6 +1753,11 @@ function drawSpecialNode(n) {
   g.appendChild(bg); g.appendChild(icon); g.appendChild(txt);
   vp.appendChild(g);
   nodeGroups.push({ el:g, data:n });
+
+  // Register with collapsible section so it gets hidden/shown on toggle
+  const typeLabel = n.nodeType === 'css' ? 'CSS / Styles' : n.nodeType === 'env' ? 'Environment' : 'Database';
+  const reg = specialSectionRegistry['__special__' + typeLabel];
+  if (reg) reg.onNodeDrawn(g);
 
   g.addEventListener('mouseenter', ev => showSpecialTip(ev, n));
   g.addEventListener('mousemove',  ev => moveTip(ev));
@@ -1917,15 +2123,22 @@ function applyVP(animated) {
 }
 
 function fitView() {
-  const allX = nodes.map(n=>n.x), allY = nodes.map(n=>n.y);
+  // Only fit to connected code nodes (exclude unused, css, env, db — they are collapsed
+  // at the bottom and would cause extreme zoom-out if included in the bounding box)
+  const fitNodes = nodes.filter(n =>
+    n.nodeType === 'code' && !unusedIds.has(n.id)
+  );
+  // Fall back to all nodes if nothing connected exists
+  const target = fitNodes.length ? fitNodes : nodes;
+  const allX = target.map(n => n.x), allY = target.map(n => n.y);
   if (!allX.length) return;
-  const minX=Math.min(...allX), maxX=Math.max(...allX)+120;
-  const minY=Math.min(...allY), maxY=Math.max(...allY)+30;
-  const scaleX=W/(maxX-minX+80), scaleY=H/(maxY-minY+80);
-  viewScale=Math.min(scaleX,scaleY,1.4);
-  viewX=W/2-((minX+maxX)/2)*viewScale;
-  viewY=H/2-((minY+maxY)/2)*viewScale;
-  initVX=viewX; initVY=viewY; initVS=viewScale;
+  const minX = Math.min(...allX), maxX = Math.max(...allX) + 120;
+  const minY = Math.min(...allY), maxY = Math.max(...allY) + 30;
+  const scaleX = W / (maxX - minX + 80), scaleY = H / (maxY - minY + 80);
+  viewScale = Math.min(scaleX, scaleY, 1.4);
+  viewX = W / 2 - ((minX + maxX) / 2) * viewScale;
+  viewY = H / 2 - ((minY + maxY) / 2) * viewScale;
+  initVX = viewX; initVY = viewY; initVS = viewScale;
   applyVP(false);
 }
 
