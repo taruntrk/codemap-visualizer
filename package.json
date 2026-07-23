@@ -1,9 +1,9 @@
 {
   "name": "z-code-visualizer",
-  "displayName": "Z Code Visualizer",
+  "displayName": "CodeMap Visualizer",
   "publisher": "taruntrk",
   "description": "Visualize your entire codebase as an interactive map — files, folders, imports, function calls, CSS, environment variables, and database connections.",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "icon": "icon.png",
   "engines": {
     "vscode": "^1.115.0"
@@ -24,14 +24,13 @@
     "map",
     "imports"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onCommand:codemap-visualizer.generate",
+    "onCommand:codemap-visualizer.generateForFolder"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
-      {
-        "command": "codemap-visualizer.helloWorld",
-        "title": "Hello World"
-      },
       {
         "command": "codemap-visualizer.generate",
         "title": "Generate Codebase Map"
