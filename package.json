@@ -1,9 +1,10 @@
 {
-  "name": "codemap-visualizer",
-  "displayName": "CodeMap Visualizer",
+  "name": "z-code-visualizer",
+  "displayName": "Z Code Visualizer",
   "publisher": "taruntrk",
   "description": "Visualize your entire codebase as an interactive map — files, folders, imports, function calls, CSS, environment variables, and database connections.",
   "version": "0.0.1",
+  "icon": "icon.png",
   "engines": {
     "vscode": "^1.115.0"
   },
@@ -16,7 +17,12 @@
     "url": "https://github.com/taruntrk/codemap-visualizer.git"
   },
   "keywords": [
-    "codebase", "visualizer", "graph", "dependency", "map", "imports"
+    "codebase",
+    "visualizer",
+    "graph",
+    "dependency",
+    "map",
+    "imports"
   ],
   "activationEvents": [],
   "main": "./dist/extension.js",
@@ -62,7 +68,7 @@
   "devDependencies": {
     "@types/mocha": "^10.0.10",
     "@types/node": "24.x",
-    "@types/vscode": "^1.125.0",
+    "@types/vscode": "^1.115.0",
     "@vscode/test-cli": "^0.0.15",
     "@vscode/test-electron": "^3.0.0",
     "esbuild": "^0.28.1",

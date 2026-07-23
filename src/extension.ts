@@ -103,7 +103,7 @@ async function buildAndShowGraph(
     CodeMapPanel.createOrShow(fullGraph, rootPath);
 }
 
-// ── 2-level folder picker ─────────────────────────────────
+// ── 3-level folder picker ─────────────────────────────────
 //
 //  Step 1: Show all top-level folders of rootPath
 //          User picks one or more (canPickMany: true)
@@ -112,6 +112,10 @@ async function buildAndShowGraph(
 //            - If it has no subfolders → include it directly
 //            - If it has subfolders    → show them, user picks specific ones
 //              (includes "✅ Select ALL" and "📄 root files" options)
+//
+//  Step 3: For EACH subfolder picked in Step 2 that has further subfolders:
+//            - Show sub-subfolders picker
+//            - Same pattern: "✅ Select ALL", "📄 root files", or specific sub-subfolders
 //
 async function pickFoldersAndGenerate(
     rootPath: string,
@@ -147,7 +151,7 @@ async function pickFoldersAndGenerate(
 
     const step1Picked = await vscode.window.showQuickPick(step1Items, {
         canPickMany:  true,
-        placeHolder:  'Step 1 of 2 — Select top-level folders to explore (multi-select OK)',
+        placeHolder:  'Step 1 of 3 — Select top-level folders to explore (multi-select OK)',
         title:        `CodeMap: ${projectName} — Choose Folders`,
         ignoreFocusOut: true,
     });
@@ -182,14 +186,12 @@ async function pickFoldersAndGenerate(
         const folderRootFileCount = getRootCodeFileCount(folderPath);
         const step2Items: vscode.QuickPickItem[] = [];
 
-        // "Select ALL" shortcut at top
         step2Items.push({
             label:       '✅ Select ALL  (entire ' + folderName + ')',
             description: 'Scan everything inside this folder recursively',
             picked:      false,
         });
 
-        // root-level files inside this folder
         if (folderRootFileCount > 0) {
             step2Items.push({
                 label:       '📄 (root files in ' + folderName + ')',
@@ -198,7 +200,6 @@ async function pickFoldersAndGenerate(
             });
         }
 
-        // each subfolder
         for (const sub of subFolders) {
             step2Items.push({
                 label:       '  📁 ' + sub,
@@ -209,7 +210,7 @@ async function pickFoldersAndGenerate(
 
         const step2Picked = await vscode.window.showQuickPick(step2Items, {
             canPickMany:  true,
-            placeHolder:  `Step 2 of 2 — Which parts of "${folderName}" to include?`,
+            placeHolder:  `Step 2 of 3 — Which parts of "${folderName}" to include?`,
             title:        `CodeMap: ${folderName} — Select Subfolders`,
             ignoreFocusOut: true,
         });
@@ -226,15 +227,78 @@ async function pickFoldersAndGenerate(
             continue;
         }
 
-        // Add specific selections
+        // ══ STEP 3 ════════════════════════════════════════
         for (const s2 of step2Picked) {
+
+            // root files of the Step-1 folder
             if (s2.label.startsWith('📄')) {
-                // root files of this folder
                 finalScanPaths.push(folderPath + '/__ROOT_FILES__');
-            } else {
-                // specific subfolder
-                const subName = s2.label.trim().replace('📁 ', '');
-                finalScanPaths.push(path.join(folderPath, subName));
+                continue;
+            }
+
+            const subName   = s2.label.trim().replace('📁 ', '');
+            const subPath   = path.join(folderPath, subName);
+            const subSubs   = getSubFolders(subPath);
+
+            // no deeper subfolders → add directly
+            if (subSubs.length === 0) {
+                finalScanPaths.push(subPath);
+                continue;
+            }
+
+            // has sub-subfolders → show step 3 picker
+            const subRootFileCount = getRootCodeFileCount(subPath);
+            const step3Items: vscode.QuickPickItem[] = [];
+
+            step3Items.push({
+                label:       '✅ Select ALL  (entire ' + subName + ')',
+                description: 'Scan everything inside this subfolder recursively',
+                picked:      false,
+            });
+
+            if (subRootFileCount > 0) {
+                step3Items.push({
+                    label:       '📄 (root files in ' + subName + ')',
+                    description: `${subRootFileCount} file(s) directly in ${subName}/`,
+                    picked:      false,
+                });
+            }
+
+            for (const subsub of subSubs) {
+                step3Items.push({
+                    label:       '    📁 ' + subsub,
+                    description: path.join(subPath, subsub),
+                    picked:      false,
+                });
+            }
+
+            const step3Picked = await vscode.window.showQuickPick(step3Items, {
+                canPickMany:  true,
+                placeHolder:  `Step 3 of 3 — Which parts of "${subName}" to include?`,
+                title:        `CodeMap: ${folderName}/${subName} — Select Sub-subfolders`,
+                ignoreFocusOut: true,
+            });
+
+            // User dismissed step 3 → include whole subfolder
+            if (!step3Picked || step3Picked.length === 0) {
+                finalScanPaths.push(subPath);
+                continue;
+            }
+
+            // "✅ Select ALL" → include whole subfolder
+            if (step3Picked.some(p => p.label.startsWith('✅'))) {
+                finalScanPaths.push(subPath);
+                continue;
+            }
+
+            // Add specific step 3 selections
+            for (const s3 of step3Picked) {
+                if (s3.label.startsWith('📄')) {
+                    finalScanPaths.push(subPath + '/__ROOT_FILES__');
+                } else {
+                    const subsubName = s3.label.trim().replace('📁 ', '');
+                    finalScanPaths.push(path.join(subPath, subsubName));
+                }
             }
         }
     }

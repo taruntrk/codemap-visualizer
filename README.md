@@ -106,11 +106,12 @@ Built with tree-sitter for accurate parsing (no regex hacks), rendered as SVG wi
 
 - **Right-click any folder** in the VS Code Explorer sidebar → select **"Generate CodeMap for this Folder"**
 - The map is scoped **only to that folder** — perfect for large monorepos where you want to focus on one app or module
-- Same 2-step folder picker as the full project command, but anchored to the selected folder as root
+- Same 3-step folder picker as the full project command, but anchored to the selected folder as root
 - **Step 1** — pick which top-level subfolders inside the selected folder to include
 - **Step 2** — for each picked subfolder that has further subfolders, choose specific subfolders, "📄 root files only", or "✅ Select ALL" recursively
-- If a subfolder has no further subfolders → included directly, Step 2 is skipped for it
-- Dismissing Step 2 → the entire folder is included
+- **Step 3** — for each Step 2 subfolder that has even deeper subfolders, choose specific sub-subfolders, "📄 root files only", or "✅ Select ALL"
+- If a subfolder has no further subfolders → included directly, the next step is skipped for it
+- Dismissing any step → the **entire folder** is included
 - Implemented via `codemap-visualizer.generateForFolder` command registered in `extension.ts`, wired to the `explorer/context` menu in `package.json`
 
 ---
@@ -136,26 +137,28 @@ Built with tree-sitter for accurate parsing (no regex hacks), rendered as SVG wi
 1. Open any project folder in VS Code
 2. Press `Ctrl+Shift+P`
 3. Type **`Generate Codebase Map`** → press Enter
-4. **Step 1 of 2:** A folder picker appears — select one or more top-level folders to explore (multi-select supported)
-5. **Step 2 of 2:** For each selected folder that has subfolders, a second picker appears — choose specific subfolders, root files only, or "Select ALL"
-6. The interactive map opens in a webview panel beside your editor
+4. **Step 1 of 3:** A folder picker appears — select one or more top-level folders to explore (multi-select supported)
+5. **Step 2 of 3:** For each selected folder that has subfolders, a second picker appears — choose specific subfolders, root files only, or "Select ALL"
+6. **Step 3 of 3:** For each subfolder picked in Step 2 that has further subfolders, a third picker appears — choose specific sub-subfolders, root files only, or "Select ALL"
+7. The interactive map opens in a webview panel beside your editor
 
 ### Option 2 — Right-click any folder (drilldown mode)
 
 1. Right-click **any folder** in the VS Code Explorer sidebar
 2. Select **"Generate CodeMap for this Folder"**
-3. Same 2-step folder picker appears, scoped to the folder you right-clicked
+3. Same 3-step folder picker appears, scoped to the folder you right-clicked
 4. Useful for large monorepos — drill into a specific app or module without scanning everything
 
-### 2-Step Folder Picker — How it works
+### 3-Step Folder Picker — How it works
 
 | Step | What you see | What you pick |
 |---|---|---|
 | **Step 1** | All top-level folders + root files | One or more folders to include |
 | **Step 2** | Subfolders inside each selected folder | Specific subfolders, "root files only", or "✅ Select ALL" |
+| **Step 3** | Sub-subfolders inside each Step 2 subfolder | Specific sub-subfolders, "root files only", or "✅ Select ALL" |
 
-- If a folder has **no subfolders** → it's added directly, Step 2 is skipped for it
-- Dismissing Step 2 → the **entire folder** is included
+- If a folder has **no subfolders** → it's added directly, the next step is skipped for it
+- Dismissing any step → the **entire folder** is included
 - Picking **"✅ Select ALL"** → entire folder included recursively
 - Picking **"📄 root files"** → only files directly in that folder (no subdirectory recursion)
 
@@ -415,5 +418,5 @@ vsce publish
 - Entry point gold border, unused files collected in dedicated section
 - Tooltip on hover for all element types
 - Reset View button
-- **Drilldown folder mode** — right-click any folder in Explorer → "Generate CodeMap for this Folder" → scoped 2-step picker for that folder only
-- **2-step folder picker** — Step 1: pick top-level folders; Step 2: pick specific subfolders, root files only, or select all recursively
+- **Drilldown folder mode** — right-click any folder in Explorer → "Generate CodeMap for this Folder" → scoped 3-step picker for that folder only
+- **3-step folder picker** — Step 1: pick top-level folders; Step 2: pick specific subfolders, root files only, or select all recursively; Step 3: pick specific sub-subfolders, root files only, or select all recursively

@@ -122,6 +122,14 @@ html, body {
   padding:4px 12px; border-radius:5px; cursor:pointer; font-size:11px;
 }
 #resetBtn:hover { background:#1177bb; }
+#searchBox {
+  margin-top:6px; display:block; width:100%;
+  background:#1e1e2e; border:1px solid #3c3c5a; color:#ddd;
+  padding:4px 10px; border-radius:5px; font-size:11px;
+  outline:none; box-sizing:border-box;
+}
+#searchBox::placeholder { color:#666; }
+#searchBox:focus { border-color:#569cd6; }
 #breadcrumb {
   display:none; align-items:center; gap:6px;
   margin-bottom:4px; font-size:12px;
@@ -243,6 +251,7 @@ function getToolbar(): string {
     Click = isolate &middot; <b>Dbl-click folder</b> = deep-dive &middot; <b>Ctrl+Click</b> = open file &middot; Drag &middot; Scroll = zoom
   </div>
   <button id="resetBtn">&#8635; Reset View</button>
+  <input id="searchBox" type="text" placeholder="&#128269; Search file..." autocomplete="off" spellcheck="false" />
 </div>`;
 }
 
@@ -2544,6 +2553,41 @@ svg.addEventListener('click',()=>{
 resetBtn.addEventListener('click',()=>{
   fullReset(false);
   viewX=initVX; viewY=initVY; viewScale=initVS; applyVP(true);
+});
+
+// ── SEARCH / FILTER ────────────────────────────────────
+const searchBox = document.getElementById('searchBox');
+searchBox.addEventListener('input', () => {
+  const q = searchBox.value.trim().toLowerCase();
+  if (!q) { fullReset(false); return; }
+  const keepNodes  = new Set();
+  const keepEdges  = new Set();
+  const keepFolders = new Set();
+  nodeGroups.forEach(ng => {
+    const name = (ng.data.fileName || ng.data.id || '').toLowerCase();
+    if (name.includes(q)) {
+      keepNodes.add(ng.data.id);
+      keepFolders.add(ng.data.folderPath || '(root)');
+    }
+  });
+  edgeEls.forEach((ee, idx) => {
+    if (keepNodes.has(ee.data.source) || keepNodes.has(ee.data.target)) {
+      keepEdges.add(idx);
+      keepNodes.add(ee.data.source);
+      keepNodes.add(ee.data.target);
+    }
+  });
+  // folders of connected nodes bhi visible rakhni hain
+  nodeGroups.forEach(ng => {
+    if (keepNodes.has(ng.data.id)) keepFolders.add(ng.data.folderPath || '(root)');
+  });
+  applyHighlight(keepNodes, keepEdges, keepFolders, null);
+});
+searchBox.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    searchBox.value = '';
+    fullReset(false);
+  }
 });
 
 // ── BOOTSTRAP ─────────────────────────────────────────
